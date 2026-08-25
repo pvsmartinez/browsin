@@ -1,0 +1,9 @@
+{
+  "name": "browsin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless browser CLI for coding agents: screenshots and DOM with a token budget. Zero dependencies.",
+  "type": "module",
+  "bin": { "browsin": "bin/browsin" },
+  "engines": { "node": ">=22" }
+}

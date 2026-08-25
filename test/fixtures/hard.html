@@ -1,0 +1,33 @@
+<!doctype html><meta charset=utf-8><title>Casos difíceis</title>
+<style>body{font:15px system-ui;margin:0;padding:24px;background:#fff}
+ canvas{border:2px solid #333;display:block;margin:12px 0}
+ .row{margin:14px 0}#drop{width:120px;height:60px;background:#eee;border:2px dashed #999;display:inline-block;text-align:center;line-height:60px}
+ #handle{width:60px;height:60px;background:#2563eb;color:#fff;text-align:center;line-height:60px;display:inline-block;cursor:grab}
+</style>
+<div class=row><button id=confirma onclick="window.res = confirm('Tem certeza?') ? 'aceitou' : 'recusou'">Pedir confirm</button> <span id=out></span></div>
+<div class=row><select id=uf><option value="">—</option><option value=sp>São Paulo</option><option value=rj>Rio de Janeiro</option></select> <span id=ufout></span></div>
+<div class=row><input type=file id=arq multiple> <span id=arqout></span></div>
+<div class=row><span id=handle>drag</span> <span id=drop>solte aqui</span></div>
+<div class=row><canvas id=cv width=300 height=120></canvas><span id=cvout>sem traço</span></div>
+<div class=row><my-widget></my-widget></div>
+<div class=row><iframe id=fr srcdoc="<body style='font:14px system-ui'><button id=inner>Botão no iframe</button><p id=ip>iframe ok</p></body>" width=300 height=80 style="border:1px solid #ccc"></iframe></div>
+<script>
+ class MyWidget extends HTMLElement{connectedCallback(){
+   const s=this.attachShadow({mode:'open'});
+   s.innerHTML='<style>b{color:#c026d3}</style><b>dentro do shadow DOM</b> <button id="shadowbtn">Botão sombra</button>';
+   s.getElementById('shadowbtn').onclick=()=>{s.querySelector('b').textContent='shadow clicado!'};
+ }}
+ customElements.define('my-widget', MyWidget);
+ document.getElementById('uf').onchange=e=>document.getElementById('ufout').textContent='escolheu: '+e.target.value;
+ document.getElementById('arq').onchange=e=>document.getElementById('arqout').textContent=[...e.target.files].map(f=>f.name+' ('+f.size+'b)').join(', ');
+ const cv=document.getElementById('cv'),ctx=cv.getContext('2d');let down=false,pts=0;
+ cv.onpointerdown=e=>{down=true;ctx.beginPath();ctx.moveTo(e.offsetX,e.offsetY)};
+ cv.onpointermove=e=>{if(!down)return;pts++;ctx.lineTo(e.offsetX,e.offsetY);ctx.strokeStyle='#dc2626';ctx.lineWidth=3;ctx.stroke()};
+ cv.onpointerup=()=>{down=false;document.getElementById('cvout').textContent='traço com '+pts+' pontos'};
+ const h=document.getElementById('handle');h.draggable=true;
+ h.addEventListener('dragstart',e=>e.dataTransfer.setData('t','x'));
+ const d=document.getElementById('drop');
+ d.addEventListener('dragover',e=>e.preventDefault());
+ d.addEventListener('drop',e=>{e.preventDefault();d.textContent='soltou!'});
+ setInterval(()=>{const r=window.res;if(r)document.getElementById('out').textContent='confirm: '+r},100);
+</script>

@@ -1,0 +1,22 @@
+<!doctype html><meta charset=utf-8><title>Teste browsin</title>
+<style>
+ body{font:16px/1.5 system-ui;margin:0;background:#0b0d12;color:#e6edf3}
+ header{padding:32px;background:linear-gradient(135deg,#1d4ed8,#7c3aed)}
+ h1{margin:0;font-size:32px}
+ .card{margin:24px;padding:20px;border:1px solid #263041;border-radius:12px}
+ #wide{width:2000px;height:40px;background:#f59e0b}
+ button{padding:10px 16px;border-radius:8px;border:0;background:#22c55e;font-weight:600}
+</style>
+<header><h1>Teste browsin</h1></header>
+<div class=card id=alvo>Bloco alvo pro --clip</div>
+<div class=card><button id=b>Clicar</button> <span id=out>nada</span></div>
+<div class=card><input id=inp placeholder="digite"></div>
+<div id=wide></div>
+<img src="/nao-existe.png">
+<script>
+ console.log("carregou ok");
+ console.warn("um aviso");
+ document.getElementById('b').onclick=()=>{document.getElementById('out').textContent='clicado!'};
+ fetch('/api/inexistente').catch(()=>{});
+ setTimeout(()=>{ null.boom },50);
+</script>
