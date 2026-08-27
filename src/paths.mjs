@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -29,8 +29,25 @@ export const writeState = (patch) => {
   return next;
 };
 
+const MAC = platform() === 'darwin';
+
 /** Where browsin keeps the two Chromium builds it owns. */
-export const BROWSERS = process.env.BROWSIN_BROWSERS || join(homedir(), 'Library/Caches/browsin');
+export const BROWSERS =
+  process.env.BROWSIN_BROWSERS ||
+  (MAC
+    ? join(homedir(), 'Library/Caches/browsin')
+    : join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'browsin'));
+
+/**
+ * Chrome builds a machine is likely to already have. macOS is the supported
+ * install target; the others exist so a Linux checkout is usable by pointing at
+ * a system Chrome, without pretending the installer covers that platform.
+ */
+const FALLBACKS = MAC
+  ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+     '/Applications/Chromium.app/Contents/MacOS/Chromium']
+  : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+     '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'];
 
 /**
  * Finds a Chromium to drive. Order matters: `chrome-headless-shell` has no UI
@@ -51,17 +68,26 @@ export const findBinary = ({ needsWindow = false } = {}) => {
 
   const chromiumDir = join(BROWSERS, 'chromium');
   if (existsSync(chromiumDir)) {
-    const app = readdirSync(chromiumDir).find((n) => n.endsWith('.app'));
-    if (app) {
-      const bin = join(chromiumDir, app, 'Contents/MacOS', app.replace(/\.app$/, ''));
-      if (existsSync(bin)) return { path: bin, shell: false };
+    if (MAC) {
+      const app = readdirSync(chromiumDir).find((n) => n.endsWith('.app'));
+      if (app) {
+        const bin = join(chromiumDir, app, 'Contents/MacOS', app.replace(/\.app$/, ''));
+        if (existsSync(bin)) return { path: bin, shell: false };
+      }
+    } else if (existsSync(join(chromiumDir, 'chrome'))) {
+      return { path: join(chromiumDir, 'chrome'), shell: false };
     }
   }
 
-  const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-  if (existsSync(chrome)) return { path: chrome, shell: false, fallback: true };
+  // Last resort: whatever Chrome the machine already has. It still runs on
+  // browsin's throwaway profile, never the user's — but `doctor` shouts, because
+  // a silent fallback makes a broken install look like a working one.
+  for (const chrome of FALLBACKS) {
+    if (existsSync(chrome)) return { path: chrome, shell: false, fallback: true };
+  }
 
   throw new Error(
-    `no Chromium found in ${BROWSERS} — run productivity-tools/browsin/scripts/install-browsers.sh`,
+    `no Chromium found in ${BROWSERS} — run scripts/install-browsers.sh (macOS), ` +
+      'or point BROWSIN_CHROME at a Chromium binary',
   );
 };

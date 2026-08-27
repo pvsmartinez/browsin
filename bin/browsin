@@ -1,5 +1,20 @@
 #!/usr/bin/env node
-import * as c from '../src/commands.mjs';
+
+// Node 22+ is the whole dependency list: the CDP client is built on the global
+// WebSocket, which older Node does not have. Checked here because the failure
+// otherwise surfaces as `WebSocket is not defined` deep in the client, which
+// reads like a bug in browsin instead of the wrong interpreter.
+const major = Number(process.versions.node.split('.')[0]);
+if (major < 22 || typeof WebSocket === 'undefined') {
+  console.error(
+    `browsin needs Node 22+ (running ${process.versions.node}${
+      typeof WebSocket === 'undefined' ? ', no global WebSocket' : ''
+    }).\n  nvm use 22   |   brew install node`,
+  );
+  process.exit(1);
+}
+
+const c = await import('../src/commands.mjs');
 
 const BOOLEAN = new Set(['full', 'mobile', 'all', 'no-snap', 'no-background', 'help', 'landscape',
   'jpeg', 'hard', 'fresh', 'net', 'failed', 'onscreen', 'append', 'enter', 'css-page-size']);
