@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { CDP } from './cdp.mjs';
 import { COLLECTOR } from './collector.mjs';
@@ -22,10 +22,38 @@ const isAlive = (pid) => {
   try { process.kill(pid, 0); return true; } catch { return false; }
 };
 
+/**
+ * The pid listening on the CDP port, asked of the OS instead of of state.json.
+ *
+ * State is disposable by design (`/tmp`), so a browser can outlive the file
+ * that remembers it — a cleaned `/tmp`, a second BROWSIN_DIR, a `down` that
+ * raced. Before this existed, such a browser was unkillable through browsin:
+ * `down` had no pid to signal, deleted the state anyway, and reported success
+ * while a headless shell kept serving the port forever.
+ */
+const portOwner = () => {
+  for (const args of [['-t', '-nP', `-iTCP:${PORT}`, '-sTCP:LISTEN'], ['-t', `-i:${PORT}`]]) {
+    try {
+      const out = execFileSync('lsof', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const pid = Number(out.trim().split(/\s+/)[0]);
+      if (pid) return pid;
+    } catch { /* lsof missing, or nobody listening */ }
+  }
+  return null;
+};
+
 /** Starts the headless shell if it is not already listening. Idempotent. */
 export const launch = async ({ headed = false } = {}) => {
   const running = await probe();
-  if (running) return { started: false, version: running.Browser };
+  if (running) {
+    // Adopting a browser we did not spawn: re-record the pid, or `down` will
+    // never be able to stop it.
+    if (!isAlive(readState().pid)) {
+      const pid = portOwner();
+      if (pid) writeState({ pid, adopted: true });
+    }
+    return { started: false, version: running.Browser };
+  }
 
   ensureDirs();
   const bin = findBinary({ needsWindow: headed });
@@ -117,7 +145,8 @@ export const connect = async ({ headed = false } = {}) => {
 };
 
 export const shutdown = async () => {
-  const { pid } = readState();
+  // state.json is a hint, not the truth: ask the OS who owns the port too.
+  const pid = isAlive(readState().pid) ? readState().pid : portOwner();
   let killed = false;
   if (isAlive(pid)) {
     try { process.kill(pid, 'SIGTERM'); killed = true; } catch { /* raced */ }
@@ -131,5 +160,8 @@ export const shutdown = async () => {
 export const status = async () => {
   const state = readState();
   const version = await probe();
-  return { ...state, up: !!version, browser: version?.Browser || null, port: PORT };
+  // A browser up without a pid in state is the orphan case; resolve it so the
+  // report names a process the user (and `down`) can actually act on.
+  const pid = isAlive(state.pid) ? state.pid : (version ? portOwner() : null);
+  return { ...state, pid, up: !!version, browser: version?.Browser || null, port: PORT };
 };

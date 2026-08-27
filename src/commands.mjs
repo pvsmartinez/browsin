@@ -671,8 +671,13 @@ export const cmdStatus = async () => {
   const doc = cmdDoctor();
   if (!s.up) return [`down  no browser running`, doc].join('\n');
   const vp = s.viewport || { width: 1280, height: 800, dpr: 1 };
-  return [`up    ${s.browser} on port ${s.port} (pid ${s.pid})`,
-    `bin   ${s.binary}${s.headlessShell ? ' (headless shell — no UI layer)' : ''}`,
+  // An adopted browser (state.json gone, browser alive) knows its pid from the
+  // OS but not which binary started it — say so instead of printing `undefined`.
+  const bin = s.binary
+    ? `${s.binary}${s.headlessShell ? ' (headless shell — no UI layer)' : ''}`
+    : 'adopted from the port — binary unknown (headless shell by default)';
+  return [`up    ${s.browser} on port ${s.port} (pid ${s.pid ?? 'unknown'})`,
+    `bin   ${bin}`,
     `view  ${vp.width}x${vp.height} @${vp.dpr}x`,
     `prof  ${PROFILE} (cookies persist here until --fresh)`,
     doc].join('\n');
@@ -693,7 +698,7 @@ export const cmdDoctor = () => {
   lines.push(`  login     ${headed ? headed.path : 'unavailable'}`);
   if (headless.fallback || headed?.fallback) {
     lines.push(`  WARN  falling back to the user's own Chrome build. Run`);
-    lines.push(`        productivity-tools/browsin/scripts/install-browsers.sh`);
+    lines.push(`        scripts/install-browsers.sh (from the browsin checkout)`);
   }
   return lines.join('\n');
 };
