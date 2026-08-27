@@ -22,7 +22,16 @@ done
 case "$(uname -sm)" in
   "Darwin arm64") PLAT=mac-arm64 ;;
   "Darwin x86_64") PLAT=mac-x64 ;;
-  *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+  *)
+    cat >&2 <<MSG
+este instalador cobre só macOS (arm64 ou x86_64); achei: $(uname -sm)
+
+Em outro sistema, aponte o browsin para um Chromium que você já tenha:
+  export BROWSIN_CHROME=/usr/bin/google-chrome
+ou instale o chrome-headless-shell na mão e aponte a pasta:
+  export BROWSIN_BROWSERS=/caminho/com/headless-shell
+MSG
+    exit 1 ;;
 esac
 
 say() { printf '  %s\n' "$*"; }
@@ -65,6 +74,25 @@ else
 fi
 
 printf '%s\n' "$version" > "$DST/VERSION"
+
+# Compatibility shim (optional): a project that uses Playwright *as a library*
+# resolves its
+# browser by Playwright's own directory layout and pinned revision. Pointing
+# PLAYWRIGHT_BROWSERS_PATH here lets it drive the browsers browsin already owns,
+# instead of downloading a second ~1 GB copy. Revisions are just directory names
+# to Playwright, so one symlink per name it might ask for is enough.
+COMPAT="$DST/playwright-compat"
+if [ "$SHELL_ONLY" -eq 0 ]; then
+  say "playwright-compat shim ..."
+  rm -rf "$COMPAT"
+  for rev in 1228 1234 1240; do
+    mkdir -p "$COMPAT/chromium_headless_shell-$rev" "$COMPAT/chromium-$rev"
+    ln -sfn "$DST/headless-shell" "$COMPAT/chromium_headless_shell-$rev/chrome-headless-shell-$PLAT"
+    ln -sfn "$DST/chromium" "$COMPAT/chromium-$rev/chrome-$PLAT"
+  done
+  say "  export PLAYWRIGHT_BROWSERS_PATH=$COMPAT"
+fi
+
 echo
 "$DST/headless-shell/chrome-headless-shell" --version
 echo "Done. browsin will find these automatically."

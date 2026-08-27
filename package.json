@@ -1,9 +1,34 @@
 {
   "name": "browsin",
   "version": "0.1.0",
-  "private": true,
   "description": "Headless browser CLI for coding agents: screenshots and DOM with a token budget. Zero dependencies.",
+  "license": "MIT",
+  "author": "Pedro Martinez",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pvsmartinez/browsin.git"
+  },
   "type": "module",
-  "bin": { "browsin": "bin/browsin" },
-  "engines": { "node": ">=22" }
+  "bin": {
+    "browsin": "bin/browsin"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "files": [
+    "bin",
+    "src",
+    "scripts",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "test/suite.sh",
+    "setup": "scripts/setup.sh"
+  }
 }
