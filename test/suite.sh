@@ -2,14 +2,17 @@
 # Acceptance suite for browsin. Run from anywhere: test/suite.sh
 #
 # Every case asserts a pattern in the command's own output, so a regression
-# shows up as a named failure instead of a silent behaviour change. Cases that
-# need a real page use the fixtures next door; a few use real workspace files
-# (the MBA BPMN kit) because paginated print and blob downloads only break on
-# real documents.
-# Resolve both paths before cd: after it, a relative $0 no longer resolves.
+# shows up as a named failure instead of a silent behaviour change. Every page a
+# case needs is in fixtures/ — including the awkward ones (tall page, blob
+# download, paginated print), because a suite that reaches outside the repo only
+# passes on the machine it was written on.
+# Resolve the paths before cd: after it, a relative $0 no longer resolves.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SP="$HERE/fixtures"
-cd "$HERE/../../.." || exit 1
+cd "$HERE/.." || exit 1
+# The checkout's own CLI, so the suite tests this tree and not whatever the PATH
+# happens to point at.
+browsin() { "$HERE/../bin/browsin" "$@"; }
 PASS=0; FAIL=0; FAILED=()
 
 t() { # t <nome> <regex esperado> <comando...>
@@ -54,7 +57,7 @@ t "type --append"         'ditado pelo agente mais' browsin type '#inp' ' mais' 
 t "key Tab"               'key   Tab'          browsin key Tab
 t "key com modificador"   'shift'              browsin key ArrowDown --mod shift
 t "hover"                 'hover'              browsin hover '#b'
-browsin open "santacruz/[Ferramenta-Eletivas]/prototipo.html" >/dev/null
+browsin open $SP/tall.html >/dev/null
 t "scroll y (página alta)" "scrl  y=200" browsin scroll 200
 browsin open $SP/basic.html >/dev/null
 t "scroll bottom"         'scrl  y='           browsin scroll bottom
@@ -81,7 +84,7 @@ echo "— PDF e download —"
 t "pdf a4"          'A4'                     browsin pdf $SP/hard.html --name p-a4
 t "pdf a3 paisagem" 'A3 landscape'           browsin pdf --format a3 --landscape --name p-a3
 t "pdf formato inválido" 'unknown --format'   browsin pdf --format a9
-browsin open 'mba/exercicios/Kit-Aluno-Alvorada/Desenhar-BPMN.html' >/dev/null
+browsin open $SP/download.html >/dev/null
 browsin click 'text=Exemplo' --wait 'document.querySelectorAll("svg rect").length > 3' >/dev/null
 t "download .bpmn"  'completed'              browsin download 'text=Baixar .bpmn'
 t "download sem alvo de download" 'no download|never completed' browsin download 'text=Limpar'

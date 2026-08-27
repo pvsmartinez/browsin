@@ -1,0 +1,45 @@
+<!doctype html><meta charset=utf-8><title>Download e desenho</title>
+<style>
+ body{font:15px system-ui;margin:0;padding:24px;background:#fff;color:#111}
+ button{padding:8px 14px;margin-right:8px;border:1px solid #999;border-radius:6px;background:#f3f4f6}
+ svg{border:1px solid #ccc;margin-top:16px;display:block}
+</style>
+<!-- Reproduz a forma que só quebra em documento de verdade: desenhar (o alvo do
+     --wait), baixar um Blob por <a download> (que o CDP só reporta como
+     Browser.downloadProgress), e um botão que age mas NÃO baixa nada — o caminho
+     de erro do `download`. -->
+<button id=exemplo>Exemplo</button>
+<button id=baixar>Baixar .bpmn</button>
+<button id=limpar>Limpar</button>
+<svg id=desenho width=420 height=160 xmlns="http://www.w3.org/2000/svg"></svg>
+<script>
+ const svg = document.getElementById('desenho');
+ const NS = 'http://www.w3.org/2000/svg';
+ const desenhar = () => {
+   svg.textContent = '';
+   for (let i = 0; i < 5; i++) {
+     const r = document.createElementNS(NS, 'rect');
+     r.setAttribute('x', 12 + i * 80); r.setAttribute('y', 40);
+     r.setAttribute('width', 64); r.setAttribute('height', 64);
+     r.setAttribute('fill', '#2563eb');
+     svg.appendChild(r);
+   }
+ };
+ const bpmn = () => `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" id="d1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <process id="p1" isExecutable="false">
+    <startEvent id="e1" name="Início"/>
+    <task id="t1" name="Fazer a coisa"/>
+    <endEvent id="e2" name="Fim"/>
+  </process>
+</definitions>`;
+ document.getElementById('exemplo').onclick = desenhar;
+ document.getElementById('limpar').onclick = () => { svg.textContent = ''; };
+ document.getElementById('baixar').onclick = () => {
+   const url = URL.createObjectURL(new Blob([bpmn()], { type: 'application/xml' }));
+   const a = document.createElement('a');
+   a.href = url; a.download = 'diagrama.bpmn';
+   document.body.appendChild(a); a.click(); a.remove();
+   setTimeout(() => URL.revokeObjectURL(url), 5000);
+ };
+</script>
