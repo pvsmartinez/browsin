@@ -3,15 +3,58 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 
 import { join } from 'node:path';
 
 /** Everything browsin owns is disposable and lives outside the user's Chrome. */
-export const ROOT = process.env.BROWSIN_DIR || '/tmp/browsin';
+export const BASE = process.env.BROWSIN_DIR || '/tmp/browsin';
+
+/**
+ * One browser per caller, not one per machine. A shared singleton was the old
+ * design and the old bug: two agents on the same port fight over the same tab,
+ * the same viewport state and the same state.json.
+ *
+ * Inside pi, PI_SESSION_ID namespaces the session automatically — every
+ * subagent run has its own id, so parallel agents stop colliding with zero
+ * configuration. Other harnesses (codex, Claude Code, plain shells) have no
+ * session id, but a terminal tab usually does: TERM_SESSION_ID keeps two
+ * agents in different tabs apart. BROWSIN_SESSION overrides when the caller
+ * knows better. An explicit BROWSIN_DIR means the caller already owns the
+ * namespace (the kit's per-run isolation, a test, a scratch run): it keeps the
+ * flat layout it always had, and `gc` reaps it like any other session once it
+ * goes idle.
+ */
+const explicitDir = !!process.env.BROWSIN_DIR;
+const rawSession =
+  process.env.BROWSIN_SESSION ||
+  (explicitDir ? '' : process.env.PI_SESSION_ID || process.env.TERM_SESSION_ID || '') ||
+  'default';
+export const SESSION =
+  rawSession.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) ||
+  'default';
+
+/** "default" stays flat (BASE/profile, BASE/state.json); named sessions nest. */
+export const ROOT = SESSION === 'default' ? BASE : join(BASE, SESSION);
 export const PROFILE = join(ROOT, 'profile');
 export const SHOTS = join(ROOT, 'shots');
 export const DOWNLOADS = join(ROOT, 'downloads');
 export const STATE_FILE = join(ROOT, 'state.json');
-export const PORT = Number(process.env.BROWSIN_PORT || 9377);
+
+/**
+ * Deterministic per session, so a session always comes back to its own port.
+ * Collisions between two sessions are resolved at launch by walking forward;
+ * the chosen port is recorded in state.json. BROWSIN_PORT pins it by hand.
+ */
+const BASE_PORT = 9377;
+const hashPort = (name) => {
+  let h = 5381;
+  for (const ch of name) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+  return BASE_PORT + (h % 500);
+};
+export const PORT = Number(process.env.BROWSIN_PORT || (SESSION === 'default' ? BASE_PORT : hashPort(SESSION)));
+
+/** GC: sessions idle past this are reaped; if more than this many are alive, oldest first. */
+export const TTL_MIN = Number(process.env.BROWSIN_TTL_MIN || 60);
+export const MAX_SESSIONS = Number(process.env.BROWSIN_MAX_SESSIONS || 8);
 
 export const ensureDirs = () => {
-  for (const d of [ROOT, SHOTS, DOWNLOADS]) mkdirSync(d, { recursive: true });
+  for (const d of [BASE, ROOT, SHOTS, DOWNLOADS]) mkdirSync(d, { recursive: true });
 };
 
 export const readState = () => {

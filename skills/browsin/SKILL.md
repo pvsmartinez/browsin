@@ -6,7 +6,10 @@ description: Ver e manipular página web pelo terminal com o browsin — screens
 # browsin
 
 CLI de browser headless para agente de código. Node puro, **zero dependência**, sobe um
-`chrome-headless-shell` com perfil descartável em `/tmp/browsin`.
+`chrome-headless-shell` com perfil descartável em `/tmp/browsin/<sessão>`. Uma sessão por agente:
+dentro do pi isso é automático (`PI_SESSION_ID`), então dois agentes não dividem a mesma aba. (Quem
+já passa um `BROWSIN_DIR` — o kit do pi — é dono do namespace e fica na sessão `default`, no layout
+plano.)
 
 Se `browsin` não está no PATH, a instalação é `scripts/setup.sh` no checkout do
 [browsin](https://github.com/pvsmartinez/browsin). `browsin doctor` diz o que está em jogo.
@@ -58,7 +61,7 @@ browsin scroll <y|top|bottom|seletor>
 # gerir
 browsin viewport [1280x800|iphone|ipad|desktop|wide] [--dpr N] [--mobile]
 browsin login [url]              # janela visível, para autenticar à mão uma vez
-browsin status · browsin doctor · browsin down [--fresh]
+browsin status · browsin doctor · browsin gc · browsin down [--fresh|--all]
 ```
 
 Seletor aceita **CSS** ou **`text=Entrar`** (o que o usuário lê — melhor que adivinhar sopa de
@@ -109,8 +112,15 @@ browsin snap --clip '[data-testid="card"]' --pad 16
 - **Shadow DOM: descendente não atravessa a fronteira.** Use o seletor de dentro do componente
   (`#shadowbtn`), não `my-widget button`.
 - **iframe cross-origin é invisível**; same-origin funciona, com offset de coordenada correto.
-- **`browsin down` ao terminar** — senão o Chromium fica de pé (~150 MB).
+- **`browsin down` ao terminar** — senão o Chromium fica de pé (~150 MB). Se outra IA trabalha em
+  paralelo, `down` mata só a *sua* sessão; `down --all --fresh` limpa tudo. Sessão ociosa por mais
+  de uma hora é ceifada sozinha.
+- **Uma sessão, um browser.** Dentro do pi cada sessão e cada run de subagente ganha a sua
+  (`PI_SESSION_ID`), então agentes paralelos não brigam pela mesma aba. Fora do pi — codex, Claude
+  Code, shell — a sessão vem da aba do terminal (`TERM_SESSION_ID`); para separar dois fluxos na
+  mesma aba, `BROWSIN_SESSION=nome`. `browsin status` mostra a sua e as outras vivas; `browsin gc`
+  mostra e força a coleta.
 - **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
   qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (56 casos).
+- **Antes de mexer no browsin**, rode `test/suite.sh` (83 casos).

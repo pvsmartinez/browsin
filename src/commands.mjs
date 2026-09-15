@@ -1,8 +1,9 @@
 import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
-import { connect, launch, shutdown, status as browserStatus } from './browser.mjs';
+import { connect, launch, shutdown, shutdownAll, status as browserStatus } from './browser.mjs';
 import { SNAPSHOT } from './query.mjs';
-import { readState, writeState, findBinary, SHOTS, DOWNLOADS, PROFILE, BROWSERS, ensureDirs } from './paths.mjs';
+import { gc, listSessions } from './gc.mjs';
+import { readState, writeState, findBinary, SHOTS, DOWNLOADS, PROFILE, BROWSERS, BASE, SESSION, ensureDirs } from './paths.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -669,7 +670,9 @@ export const cmdViewport = async (args) => {
 export const cmdStatus = async () => {
   const s = await browserStatus();
   const doc = cmdDoctor();
-  if (!s.up) return [`down  no browser running`, doc].join('\n');
+  const others = listSessions().filter((x) => x.alive && x.name !== s.session).map((x) => x.name);
+  const sessLine = `sess  ${s.session}${others.length ? ` · também vivas: ${others.join(', ')}` : ''}`;
+  if (!s.up) return [`down  no browser running`, sessLine, doc].join('\n');
   const vp = s.viewport || { width: 1280, height: 800, dpr: 1 };
   // An adopted browser (state.json gone, browser alive) knows its pid from the
   // OS but not which binary started it — say so instead of printing `undefined`.
@@ -677,6 +680,7 @@ export const cmdStatus = async () => {
     ? `${s.binary}${s.headlessShell ? ' (headless shell — no UI layer)' : ''}`
     : 'adopted from the port — binary unknown (headless shell by default)';
   return [`up    ${s.browser} on port ${s.port} (pid ${s.pid ?? 'unknown'})`,
+    sessLine,
     `bin   ${bin}`,
     `view  ${vp.width}x${vp.height} @${vp.dpr}x`,
     `prof  ${PROFILE} (cookies persist here until --fresh)`,
@@ -704,12 +708,33 @@ export const cmdDoctor = () => {
 };
 
 export const cmdDown = async (args) => {
+  if (args.all) {
+    const victims = await shutdownAll();
+    if (args.fresh) rmSync(BASE, { recursive: true, force: true });
+    const what = victims.length ? `stopped: ${victims.join(', ')}` : 'nothing was running';
+    return `down  ${what} (all sessions)${args.fresh ? ' · everything wiped' : ''}`;
+  }
   const stopped = await shutdown();
   if (args.fresh) {
     rmSync(PROFILE, { recursive: true, force: true });
     return `down  ${stopped ? 'browser stopped' : 'nothing was running'} · profile wiped (logged out everywhere)`;
   }
   return stopped ? 'down  browser stopped' : 'down  nothing was running';
+};
+
+/**
+ * Manual run of the collector that `launch` already runs opportunistically.
+ * Exists so the user can see and force it — and so a cron or routine can run
+ * it without opening any browser.
+ */
+export const cmdGc = async () => {
+  const actions = await gc({ force: true });
+  const alive = listSessions().filter((s) => s.alive);
+  const now = alive.map((s) => `${s.name} (pid ${s.pid}, idle ${Math.round(s.idleMin)}m)`).join(', ');
+  return [
+    actions.length ? actions.map((a) => `gc    ${a}`).join('\n') : 'gc    nothing to reap',
+    `alive ${alive.length ? now : 'no live session'}`,
+  ].join('\n');
 };
 
 /**

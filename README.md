@@ -13,7 +13,7 @@ view  1440x900 @1x · 48 nodes · page 900px tall
 net   35 request(s), all ok
 logs  clean (+3 log/info/debug)
 
-snap  /tmp/browsin/shots/check.png
+snap  /tmp/browsin/<sessão>/shots/check.png
 size  1440x900px · 28 KB · 1x
 ```
 
@@ -28,7 +28,7 @@ coisa errada:
   **é** a sessão dele; errado para "tira um print do meu dev server".
 
 O browsin fica no meio: um `chrome-headless-shell` (sem camada de UI — fisicamente incapaz de
-aparecer na tela) com perfil descartável em `/tmp/browsin`, dirigido por CDP cru. 146 MB de RAM,
+aparecer na tela) com perfil descartável em `/tmp/browsin/<sessão>`, dirigido por CDP cru. 146 MB de RAM,
 ~700 ms do nada até o PNG.
 
 ## Instalação
@@ -99,6 +99,33 @@ ln -sfn "$PWD/skills/browsin" ~/.claude/skills/browsin     # Claude Code
 Em agente sem sistema de skills, aponte o AGENTS.md/CLAUDE.md do projeto para o arquivo, ou cole o
 conteúdo. O que não funciona é instalar o CLI e não contar para ninguém.
 
+### Como tool do harness pi
+
+O browsin também se registra como **tool** estruturado no harness
+[pi](https://github.com/earendil-works/pi) — chamada com `action` tipado, sem depender do modelo
+ler skill primeiro. A integração mora no [pi-workspace-kit](../pi-workspace-kit/) (tools por
+workspace + subagentes); este README só documenta o provider do browsin. Nada vem ligado por
+default: cada workspace opta via `.pi/tools.json` (descoberto subindo a árvore a partir do cwd,
+mesmo gate de confiança de `.pi/extensions`).
+
+```bash
+../pi-workspace-kit/scripts/install.sh   # symlinka as extensões do kit em ~/.pi/agent/extensions/
+```
+
+Configuração — workspace (`<raiz>/.pi/tools.json`) ou global (`~/.pi/agent/tools.json`):
+
+```json
+{
+  "tools": {
+    "browsin": { "enabled": true, "binary": "browsin", "timeout": 120000 }
+  }
+}
+```
+
+- `"browsin": true` (shorthand) ou `false` (registra mas deixa inativo).
+- `/tools list | enable browsin | disable browsin` no pi — toggle por sessão; `--save` persiste.
+- Qualquer CLI vira tool com o provider genérico `cli` (veja `../pi-workspace-kit/ext/workspace-tools.ts`).
+
 ## Comandos
 
 | | |
@@ -118,10 +145,49 @@ conteúdo. O que não funciona é instalar o CLI e não contar para ninguém.
 | `scroll <y\|top\|bottom\|seletor>` | posiciona a página |
 | `viewport [1280x800\|iphone\|ipad\|desktop\|wide]` | persiste entre chamadas |
 | `login [url]` | janela **visível** para autenticar à mão, uma vez |
-| `status` · `down [--fresh]` | inspeciona / mata (e opcionalmente desloga) |
+| `status` · `doctor` · `gc` · `down [--fresh\|--all]` | inspeciona / mata (e opcionalmente desloga) |
 
 Seletores aceitam **CSS** ou **`text=Entrar`** — endereçar pelo que o usuário lê, em vez de
 adivinhar sopa de classe Tailwind. Os dois atravessam **shadow DOM** e **iframe same-origin**.
+
+## Sessões: um browser por agente
+
+O browsin era um singleton — porta fixa e uma aba só. Dois agentes na mesma máquina brigavam pela
+mesma aba: um navegava, o outro tirava print da página errada, e o `down` de um matava o browser do
+outro. Agora cada sessão tem porta, perfil, `state.json` e `shots/` próprios:
+
+| chave | quando |
+|---|---|
+| `BROWSIN_SESSION` | explícito, quando o chamador sabe o que está fazendo |
+| `PI_SESSION_ID` | automático dentro do pi — **cada run de subagente tem o seu**, então subagentes paralelos não colidem |
+| `TERM_SESSION_ID` | fora do pi (codex, Claude Code, shells): isola por aba de terminal |
+| `default` | sem nenhuma das anteriores — ou com `BROWSIN_DIR` explícito, que é namespace do próprio chamador |
+
+`browsin status` mostra a sua sessão (e lista as outras vivas); `browsin down` derruba só a sua.
+
+A sessão `default` (sem `BROWSIN_SESSION`/`PI_SESSION_ID`) fica no layout plano, com `profile/` e
+`state.json` direto em `BROWSIN_DIR` — é o que um chamador que já isola por conta própria (o kit do
+pi, um teste, um run de rascunho) sempre teve. Sessões nomeadas ganham subdiretório.
+
+### E não vaza
+
+Sessão órfã é memória parada (~150 MB por browser), então `launch` roda um coletor antes de subir.
+Sessão com browser morto é apagada; sessão ociosa há mais de `BROWSIN_TTL_MIN` (default 60 min) é
+derrubada; acima de `BROWSIN_MAX_SESSIONS` (default 8) as mais ociosas são ceifadas. `browsin gc`
+roda isso à mão e diz o que fez, e `browsin down --all` derruba todas de uma vez.
+
+Dois buracos que o coletor cobre e que valem saber: browser que perdeu o `state.json` (varrido por
+`ps --user-data-dir` — senão fica imortal) e a sessão `default`, que é o layout plano e por isso
+precisa ser coletada pelo `gc` de *outra* sessão (uma sessão nunca derruba o browser que está
+usando). Sem o `state.json`, a idade passa a ser o mtime do diretório — foi o que fez o `down`
+parar de deixar 200 MB invisíveis para sempre.
+
+| variável | para quê |
+|---|---|
+| `BROWSIN_SESSION` | namespace da sessão (default: `PI_SESSION_ID`, senão `TERM_SESSION_ID`, senão `default`) |
+| `BROWSIN_DIR` | raiz (default `/tmp/browsin`); sessões nomeadas viram subdiretório, a `default` fica na raiz |
+| `BROWSIN_PORT` | porta fixa (default: 9377 + hash da sessão) |
+| `BROWSIN_TTL_MIN` · `BROWSIN_MAX_SESSIONS` | coleta: ociosidade e teto de sessões vivas |
 
 ## Três decisões de projeto
 
@@ -132,8 +198,8 @@ lista a tela inteira em ~250 tokens onde um print custa ~1500.
 **Sem daemon.** O coletor de console/erro roda **dentro da página**
 (`Page.addScriptToEvaluateOnNewDocument` → `window.__browsin`). Cada invocação do CLI é um
 processo curto que ataca a mesma aba e drena o buffer — não existe processo de fundo guardando
-estado, e o que o CDP zera ao desconectar (viewport, coletor) é restaurado no attach a partir de
-`/tmp/browsin/state.json`.
+estado, e o que o CDP zera ao desconectar (viewport, coletor) é restaurado no attach a partir do
+`state.json` da sessão.
 
 **Uma resolução de seletor para todos os comandos.** `text=`, shadow DOM e iframe vivem num só
 helper injetado (`window.__bq`), que devolve também o **offset do frame** — é o que faz um clique
@@ -142,12 +208,14 @@ por coordenada acertar um botão dentro de um iframe. Comando novo herda tudo is
 ## Testes
 
 ```bash
-test/suite.sh     # 56 casos, incluindo os que só quebram em documento real
+test/suite.sh     # 83 casos, incluindo os que só quebram em documento real
 ```
 
 A bateria cobre console/rede/recurso, snapshot, os quatro modos de `snap`, PDF paginado, diálogo
-`confirm()`, select, upload, download de blob, drag em canvas, shadow DOM, iframe, e todos os
-caminhos de erro. Rode antes de mexer em qualquer coisa.
+`confirm()`, select, upload, download de blob, drag em canvas, shadow DOM, iframe, sessões
+concorrentes e coleta, e todos os caminhos de erro. É **hermética**: roda num `BROWSIN_DIR`
+temporário, então `down --all` e `gc` não tocam no browser que outro agente esteja usando. Rode
+antes de mexer em qualquer coisa.
 
 ## Armadilhas
 
@@ -168,8 +236,11 @@ caminhos de erro. Rode antes de mexer em qualquer coisa.
 - **iframe cross-origin é invisível.** O piercing só alcança `contentDocument` acessível.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
 - **`state.json` pode sumir com o browser vivo** (`/tmp` limpo, dois `BROWSIN_DIR`). Nesse caso o
-  `down` mata pelo dono da porta, e o `status` diz `adopted from the port`. Antes disso o headless
-  shell ficava imortal.
+  `down` mata pelo dono da porta, o `status` diz `adopted from the port` e o `gc` varre o browser
+  órfão pelo `--user-data-dir`. Antes disso o headless shell ficava imortal.
+- **Sessão não é browser.** `down` derruba o browser e mantém perfil e `shots/` da sessão (é onde os
+  cookies ficam); o coletor só apaga o diretório quando a sessão passa do TTL. Para sumir com tudo
+  agora, `down --all --fresh`.
 
 ## Licença
 

@@ -50,7 +50,8 @@ const COMMANDS = {
   snap: c.cmdSnap, pdf: c.cmdPdf,
   click: c.cmdClick, hover: c.cmdHover, type: c.cmdType, key: c.cmdKey, select: c.cmdSelect,
   upload: c.cmdUpload, download: c.cmdDownload, drag: c.cmdDrag, scroll: c.cmdScroll,
-  viewport: c.cmdViewport, login: c.cmdLogin, status: c.cmdStatus, doctor: c.cmdDoctor, down: c.cmdDown,
+  viewport: c.cmdViewport, login: c.cmdLogin, status: c.cmdStatus, doctor: c.cmdDoctor,
+  gc: c.cmdGc, down: c.cmdDown,
 };
 
 const ALIASES = { snaps: 'snapshot', ss: 'snapshot', shot: 'snap', pic: 'snap', stop: 'down', quit: 'down' };
@@ -75,7 +76,7 @@ act        click <sel> · hover <sel> · type <sel> <text> [--enter]
            scroll <y|top|bottom|selector>
 manage     viewport [1280x800|iphone|ipad|desktop|wide] [--dpr N] [--mobile]
            login [url]           visible window to sign in by hand, once
-           status · doctor · down [--fresh]
+           status · doctor · gc · down [--fresh] [--all]
 
 Selectors accept CSS, or "text=Entrar" to address an element by what the user
 reads. Both pierce shadow DOM.
@@ -86,7 +87,9 @@ Flags: --wait '<expr>'  --timeout ms  --dpr N  --nth N  --clip SEL --pad px  --f
        --mod cmd,shift  --on SEL  --by dx,dy  --steps N  --limit N  --onscreen
        --append  --enter  --net  --all  --no-snap  --hard  --fresh
 
-Never touches your real Chrome: headless shell, throwaway profile in /tmp/browsin.`;
+Never touches your real Chrome: headless shell, throwaway profile in /tmp/browsin.
+One browser per session (BROWSIN_SESSION, else PI_SESSION_ID, else "default"); sessions
+idle past BROWSIN_TTL_MIN (default 60) are reaped automatically — see browsin gc.`;
 
 const [rawName, ...rest] = process.argv.slice(2);
 const name = ALIASES[rawName] || rawName;

@@ -15,6 +15,14 @@ cd "$HERE/.." || exit 1
 browsin() { "$HERE/../bin/browsin" "$@"; }
 PASS=0; FAIL=0; FAILED=()
 
+# Hermetic: the suite gets its own base directory, so `down`/`down --all`/`gc`
+# never touch a live browser another agent may be driving in /tmp/browsin.
+# PI_SESSION_ID is cleared so "default" is deterministic; session cases set it
+# back per command.
+export BROWSIN_DIR="$(mktemp -d /tmp/browsin-suite.XXXXXX)"
+unset PI_SESSION_ID BROWSIN_SESSION
+trap 'browsin down --all >/dev/null 2>&1; rm -rf "$BROWSIN_DIR"' EXIT
+
 t() { # t <nome> <regex esperado> <comando...>
   local nome="$1" want="$2"; shift 2
   local out; out=$("$@" 2>&1)
@@ -99,6 +107,95 @@ t "arquivo inexistente"    'no such file'       browsin open ./nao/existe.html
 t "url morta"              'ERR_'               browsin open http://127.0.0.1:59998
 t "down"                   'down '              browsin down
 t "status com browser off" 'no browser running' browsin status
+
+echo "— sessões e concorrência —"
+sess() { local s="$1"; shift; BROWSIN_SESSION="$s" browsin "$@"; }
+# Auto-namespacing por PI_SESSION_ID só vale sem BROWSIN_DIR explícito (quem passa
+# o dir é dono do namespace) — por isso o status roda no BASE real, sem lançar nada.
+pi_sess() { local i="$1"; shift; BROWSIN_DIR= PI_SESSION_ID="$i" browsin "$@"; }
+
+t "sessão A sobe isolada"         'open '              sess suite-a open $SP/basic.html
+t "sessão B não vê a A"           'no browser running' sess suite-b status
+sess suite-b open $SP/tall.html >/dev/null 2>&1
+t "A continua viva com B viva"    'on port'            sess suite-a status
+t "aba da A é a da A"             'Teste browsin'      sess suite-a js 'document.title'
+t "aba da B é a da B"             'Página alta'        sess suite-b js 'document.title'
+t "status lista as outras vivas"  'também vivas'       sess suite-a status
+t "PI_SESSION_ID vira sessão"     'sess  pi-auto-42'   pi_sess pi-auto-42 status
+t "TERM_SESSION_ID vira sessão"   'sess  term-tab-77'  env -u PI_SESSION_ID TERM_SESSION_ID=term-tab-77 BROWSIN_DIR= browsin status
+
+PA=$(sess suite-a status | grep -oE 'port [0-9]+')
+PB=$(sess suite-b status | grep -oE 'port [0-9]+')
+if [ -n "$PA" ] && [ "$PA" != "$PB" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "portas distintas ($PA vs $PB)"
+else FAIL=$((FAIL+1)); FAILED+=("portas distintas por sessão"); printf '  FAIL portas distintas: %s vs %s\n' "$PA" "$PB"; fi
+
+sess suite-a down >/dev/null 2>&1
+t "down da A não derruba a B"     'up '               sess suite-b status
+
+echo "— gc —"
+mkdir -p "$BROWSIN_DIR/suite-morta"
+echo '{"pid": 999999, "port": 9390, "lastUsed": 1}' > "$BROWSIN_DIR/suite-morta/state.json"
+t "gc apaga sessão de browser morto" 'suite-morta'    browsin gc
+
+sleep 300 & FPID=$!
+mkdir -p "$BROWSIN_DIR/suite-velha"
+echo "{\"pid\": $FPID, \"port\": 9391, \"lastUsed\": 1}" > "$BROWSIN_DIR/suite-velha/state.json"
+t "gc ceifa sessão idle"          'suite-velha'       browsin gc
+if kill -0 "$FPID" 2>/dev/null; then
+  FAIL=$((FAIL+1)); FAILED+=("gc mata o processo da sessão idle"); printf '  FAIL %s\n' "gc mata o processo da sessão idle"
+else PASS=$((PASS+1)); printf '  ok   %s\n' "gc mata o processo da sessão idle"; fi
+t "gc preserva sessão viva"       'suite-b'           browsin gc
+
+# O caso que a AGENTS.md chama de headless shell imortal: o state.json some
+# mas o browser segue de pé, sem pid que o reconheça.
+sess suite-orf open $SP/basic.html >/dev/null 2>&1
+ORFPID=$(sess suite-orf status | grep -oE 'pid [0-9]+' | grep -oE '[0-9]+')
+rm -f "$BROWSIN_DIR/suite-orf/state.json"
+t "gc mata órfão sem state.json"  'kill órfão'        browsin gc
+if [ -n "$ORFPID" ] && kill -0 "$ORFPID" 2>/dev/null; then
+  FAIL=$((FAIL+1)); FAILED+=("gc mata o browser órfão"); printf '  FAIL %s\n' "gc mata o browser órfão"
+else PASS=$((PASS+1)); printf '  ok   %s\n' "gc mata o browser órfão"; fi
+
+# O outro lado da história do state sumido: sem sweep due, o browser órfão é
+# adotado de volta — e a aba sobrevive.
+sess suite-adopt open $SP/basic.html >/dev/null 2>&1
+APID=$(sess suite-adopt status | grep -oE 'pid [0-9]+' | grep -oE '[0-9]+')
+rm -f "$BROWSIN_DIR/suite-adopt/state.json"
+touch "$BROWSIN_DIR/.gc-stamp"
+t "state sumido, pid recuperado"  "pid $APID"         sess suite-adopt status
+t "adoção mantém a aba"           'Teste browsin'      sess suite-adopt js 'document.title'
+
+sess suite-ttl open $SP/basic.html >/dev/null 2>&1
+ttl_gc() { BROWSIN_TTL_MIN=0 browsin gc; }
+t "TTL configurável ceifa sessão ociosa" 'suite-ttl' ttl_gc
+
+# `down` apaga o state.json: sem a idade caindo para o mtime do diretório, esse
+# profile ficaria invisível ao coletor para sempre.
+sess suite-parada open $SP/basic.html >/dev/null 2>&1
+sess suite-parada down >/dev/null 2>&1
+t "gc ceifa sessão parada (sem state.json)" 'suite-parada' ttl_gc
+if [ ! -d "$BROWSIN_DIR/suite-parada" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "diretório da sessão parada removido"
+else FAIL=$((FAIL+1)); FAILED+=("diretório da sessão parada removido"); printf '  FAIL %s\n' "diretório da sessão parada removido"; fi
+
+# A sessão "default" é o layout plano dentro do BASE (é o que um chamador com
+# BROWSIN_DIR próprio sempre teve). Ela envelhece como qualquer outra — mas quem
+# a coleta é outra sessão, já que `own` nunca é tocada.
+mkdir -p "$BROWSIN_DIR/profile"; touch "$BROWSIN_DIR/profile/Cookies"
+echo '{"pid": 999999, "lastUsed": 1}' > "$BROWSIN_DIR/state.json"
+reap_default() { BROWSIN_SESSION=suite-de-fora BROWSIN_TTL_MIN=0 browsin gc; }
+t "gc coleta a sessão default parada" 'default' reap_default
+if [ ! -d "$BROWSIN_DIR/profile" ] && [ ! -f "$BROWSIN_DIR/state.json" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "layout default coletado"
+else FAIL=$((FAIL+1)); FAILED+=("layout default coletado"); printf '  FAIL %s\n' "layout default coletado"; fi
+
+sess suite-a open $SP/basic.html >/dev/null 2>&1
+gc_cap() { BROWSIN_MAX_SESSIONS=1 browsin gc; }
+t "cap de sessões ceifa a mais antiga" 'acima do cap' gc_cap
+
+echo "— down --all —"
+sess suite-a open $SP/basic.html >/dev/null 2>&1
+t "down --all derruba todas"      'all sessions'      browsin down --all
+t "B caiu com --all"             'no browser running' sess suite-b status
+t "A caiu com --all"             'no browser running' sess suite-a status
 
 echo
 echo "RESULTADO: $PASS ok, $FAIL falhas"
