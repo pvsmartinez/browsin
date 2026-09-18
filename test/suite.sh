@@ -57,6 +57,42 @@ t "snap full"          'snap  /tmp'  browsin snap --full --name s5
 t "snap jpeg"          '\.jpg'       browsin snap --jpeg --quality 60 --name s6
 t "snap clip sem match falha" 'no match' browsin snap --clip '#nada'
 
+echo "— gravação —"
+RECORD_OUT="$BROWSIN_DIR/demo/flow.gif"
+t "record start" 'started.*frame' browsin record start --name flow --fps 8 --max-seconds 30
+browsin click '#b' >/dev/null
+browsin type '#inp' 'fluxo gravado' >/dev/null
+t "record status conta frames" 'active.*3 frame' browsin record status
+if command -v ffmpeg >/dev/null 2>&1; then
+  # --width ímpar: o pipeline passa por um MP4 intermediário que exige
+  # dimensões pares — o stop deve normalizar e gravar 640x400.
+  t "record stop gera GIF" 'record  .*flow\.gif' browsin record stop -o "$RECORD_OUT" --width 641 --max-gap 0.2
+  if [ -s "$RECORD_OUT" ] && [ -s "$RECORD_OUT.json" ]; then
+    PASS=$((PASS+1)); printf '  ok   %s\n' "record grava artefato + sidecar"
+  else
+    FAIL=$((FAIL+1)); FAILED+=("record grava artefato + sidecar"); printf '  FAIL %s\n' "record grava artefato + sidecar"
+  fi
+  if grep -q '"width": 640' "$RECORD_OUT.json"; then
+    PASS=$((PASS+1)); printf '  ok   %s\n' "record normaliza largura ímpar para par"
+  else
+    FAIL=$((FAIL+1)); FAILED+=("record normaliza largura ímpar para par"); printf '  FAIL %s\n' "record normaliza largura ímpar para par"
+  fi
+  if command -v ffprobe >/dev/null 2>&1 && [ "$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$RECORD_OUT")" -gt 1 ]; then
+    PASS=$((PASS+1)); printf '  ok   %s\n' "record GIF tem múltiplos frames"
+  else
+    FAIL=$((FAIL+1)); FAILED+=("record GIF tem múltiplos frames"); printf '  FAIL %s\n' "record GIF tem múltiplos frames"
+  fi
+else
+  t "record stop sem ffmpeg é claro" 'ffmpeg not found' browsin record stop -o "$RECORD_OUT"
+  browsin record cancel >/dev/null
+fi
+t "record terminou" 'not recording' browsin record status
+t "record reinicia com nome hostil sanitizado" 'started' browsin record start --name '../../etc/x'
+t "record rejeita conflito de formato" 'conflicts' browsin record stop -o "$BROWSIN_DIR/x.gif" --format mp4
+t "record rejeita max-gap inválido" 'non-negative' browsin record stop --max-gap abc
+t "record cancel" 'canceled' browsin record cancel
+t "record cancel limpa estado" 'not recording' browsin record status
+
 echo "— interação —"
 t "click"                 'clicado|click '     browsin click '#b'
 t "click confirma efeito" 'clicado!'           browsin js "document.getElementById('out').textContent"
@@ -105,8 +141,10 @@ t "status"                 'headless shell'     browsin status
 t "comando desconhecido"   'unknown command'    browsin banana
 t "arquivo inexistente"    'no such file'       browsin open ./nao/existe.html
 t "url morta"              'ERR_'               browsin open http://127.0.0.1:59998
-t "down"                   'down '              browsin down
-t "status com browser off" 'no browser running' browsin status
+browsin record start --name down-cancels >/dev/null
+t "down cancela gravação"   'active recording canceled' browsin down
+t "gravação caiu com down"  'not recording'       browsin record status
+t "status com browser off"  'no browser running' browsin status
 
 echo "— sessões e concorrência —"
 sess() { local s="$1"; shift; BROWSIN_SESSION="$s" browsin "$@"; }

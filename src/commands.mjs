@@ -3,6 +3,7 @@ import { join, resolve as resolvePath } from 'node:path';
 import { connect, launch, shutdown, shutdownAll, status as browserStatus } from './browser.mjs';
 import { SNAPSHOT } from './query.mjs';
 import { gc, listSessions } from './gc.mjs';
+import { afterAction, cancelRecording, startRecording, statusRecording, stopRecording } from './recording.mjs';
 import { readState, writeState, findBinary, SHOTS, DOWNLOADS, PROFILE, BROWSERS, BASE, SESSION, ensureDirs } from './paths.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -159,6 +160,7 @@ export const cmdOpen = async (args) => {
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
   const net = stopNet();
+  await afterAction(cdp);
   cdp.close();
 
   return [`open  ${head.url}`, `title ${head.title || '(untitled)'}`,
@@ -183,6 +185,7 @@ export const cmdCheck = async (args) => {
     scrollHeight: document.documentElement.scrollHeight,
     emptyBody: document.body ? document.body.innerText.trim().length === 0 : true
   })`));
+  await afterAction(cdp);
   cdp.close();
 
   const out = [`check ${head.url}`, `title ${head.title || '(untitled)'}`,
@@ -210,6 +213,7 @@ export const cmdReload = async (args) => {
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
   const net = stopNet();
+  await afterAction(cdp);
   cdp.close();
   return [`reload ${head.url}${args.hard ? ' (cache bypassed)' : ''}`, ...dialogLines(dialogs),
     ...renderNetwork(net, { all: !!args.net }), ...logSummary(logs)].join('\n');
@@ -223,6 +227,7 @@ export const cmdBack = async () => {
   await waitForExpression(cdp, 'document.readyState === "complete"', 5000);
   await settle(cdp);
   const head = await pageHead(cdp);
+  await afterAction(cdp);
   cdp.close();
   return `back  ${head.url}`;
 };
@@ -309,6 +314,7 @@ export const cmdJs = async (args) => {
   const { cdp } = await connect();
   const value = await cdp.eval(expr);
   const logs = await drainLogs(cdp);
+  await afterAction(cdp);
   cdp.close();
   const out = [typeof value === 'string' ? value : JSON.stringify(value, null, 2)];
   if (logs.length) out.push('--- logs ---', ...renderLogs(logs, { all: true }));
@@ -458,6 +464,7 @@ export const cmdClick = async (args) => {
   await settle(cdp);
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
+  await afterAction(cdp);
   cdp.close();
   return [`click ${sel} (${box.tag}) at ${Math.round(box.x)},${Math.round(box.y)}`, `url   ${head.url}`,
     ...dialogLines(dialogs), ...renderLogs(logs)].join('\n');
@@ -471,6 +478,7 @@ export const cmdHover = async (args) => {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y });
   await sleep(Number(args.settle || 350));
   await settle(cdp);
+  await afterAction(cdp);
   cdp.close();
   return `hover ${sel} at ${Math.round(box.x)},${Math.round(box.y)}`;
 };
@@ -500,6 +508,7 @@ export const cmdType = async (args) => {
     return 'value' in el ? el.value : el.textContent;
   })()`);
   const logs = await drainLogs(cdp);
+  await afterAction(cdp);
   cdp.close();
   return [`type  ${sel} = ${JSON.stringify(String(value).slice(0, 200))}${args.enter ? ' + Enter' : ''}`,
     ...renderLogs(logs)].join('\n');
@@ -538,6 +547,7 @@ export const cmdKey = async (args) => {
   await settle(cdp);
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
+  await afterAction(cdp);
   cdp.close();
   return [`key   ${args.mod ? args.mod + '+' : ''}${key}`, `url   ${head.url}`,
     ...dialogLines(dialogs), ...renderLogs(logs)].join('\n');
@@ -563,6 +573,7 @@ export const cmdSelect = async (args) => {
     return JSON.stringify({ ok: true, value: el.value, label: opt.textContent.trim() });
   })()`).then(JSON.parse);
   await settle(cdp);
+  await afterAction(cdp);
   cdp.close();
   if (!result.ok) throw new Error(`select ${sel}: ${result.reason}${result.options ? ` — options: ${result.options.join(', ')}` : ''}`);
   return `sel   ${sel} = ${JSON.stringify(result.value)} (${result.label})`;
@@ -582,6 +593,7 @@ export const cmdUpload = async (args) => {
   await cdp.send('DOM.setFileInputFiles', { files: paths, objectId });
   await settle(cdp);
   const logs = await drainLogs(cdp);
+  await afterAction(cdp);
   cdp.close();
   return [`up    ${sel} ← ${paths.length} file(s): ${paths.map((p) => p.split('/').pop()).join(', ')}`,
     ...renderLogs(logs)].join('\n');
@@ -617,6 +629,7 @@ export const cmdDrag = async (args) => {
   await sleep(200);
   await settle(cdp);
   const logs = await drainLogs(cdp);
+  await afterAction(cdp);
   cdp.close();
   return [`drag  ${Math.round(a.x)},${Math.round(a.y)} → ${Math.round(target.x)},${Math.round(target.y)} in ${steps} steps`,
     ...renderLogs(logs)].join('\n');
@@ -636,6 +649,7 @@ export const cmdScroll = async (args) => {
   await sleep(Number(args.settle || 250));
   await settle(cdp);
   const pos = JSON.parse(await cdp.eval('JSON.stringify({ y: Math.round(scrollY), h: document.documentElement.scrollHeight })'));
+  await afterAction(cdp);
   cdp.close();
   return `scrl  y=${pos.y} / ${pos.h}px`;
 };
@@ -663,6 +677,7 @@ export const cmdViewport = async (args) => {
   };
   writeState({ viewport });
   const { cdp } = await connect();
+  await afterAction(cdp);
   cdp.close();
   return `view  ${viewport.width}x${viewport.height} @${viewport.dpr}x${viewport.mobile ? ' mobile' : ''} (persisted)`;
 };
@@ -708,18 +723,34 @@ export const cmdDoctor = () => {
 };
 
 export const cmdDown = async (args) => {
+  // A recording must never outlive its browser: drop the frames and the state.
+  const wasRecording = cancelRecording();
+  const recNote = wasRecording ? ' · active recording canceled (frames discarded)' : '';
   if (args.all) {
     const victims = await shutdownAll();
     if (args.fresh) rmSync(BASE, { recursive: true, force: true });
     const what = victims.length ? `stopped: ${victims.join(', ')}` : 'nothing was running';
-    return `down  ${what} (all sessions)${args.fresh ? ' · everything wiped' : ''}`;
+    return `down  ${what} (all sessions)${recNote}${args.fresh ? ' · everything wiped' : ''}`;
   }
   const stopped = await shutdown();
   if (args.fresh) {
     rmSync(PROFILE, { recursive: true, force: true });
-    return `down  ${stopped ? 'browser stopped' : 'nothing was running'} · profile wiped (logged out everywhere)`;
+    return `down  ${stopped ? 'browser stopped' : 'nothing was running'} · profile wiped (logged out everywhere)${recNote}`;
   }
-  return stopped ? 'down  browser stopped' : 'down  nothing was running';
+  return `down  ${stopped ? 'browser stopped' : 'nothing was running'}${recNote}`;
+};
+
+/**
+ * `browsin record` — daemon-free screen recording. Frames are captured by the
+ * ordinary commands themselves (afterAction); this only dispatches the subcommand.
+ */
+export const cmdRecord = async (args) => {
+  const [sub] = args._;
+  if (sub === 'start') return startRecording(args);
+  if (sub === 'status') return statusRecording();
+  if (sub === 'stop') return stopRecording(args);
+  if (sub === 'cancel') return cancelRecording() ? 'rec   canceled — frames discarded' : 'rec   nothing to cancel';
+  throw new Error('usage: browsin record <start|status|stop|cancel>');
 };
 
 /**
@@ -801,6 +832,7 @@ export const cmdLogin = async (args) => {
   const { cdp } = await connect({ headed: true });
   if (url) await navigate(cdp, url, { timeout: Number(args.timeout || 30000) }).catch(() => {});
   const head = await pageHead(cdp);
+  await afterAction(cdp);
   cdp.close();
   return [
     `login window open${info.started ? '' : ' (already running)'} — ${head.url}`,

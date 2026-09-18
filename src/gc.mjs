@@ -84,7 +84,7 @@ export const listSessions = () => {
   };
 
   if (existsSync(join(BASE, 'state.json')) || existsSync(join(BASE, 'profile'))) {
-    entry('default', BASE, ['profile', 'shots', 'downloads', 'state.json'].map((n) => join(BASE, n)));
+    entry('default', BASE, ['profile', 'shots', 'downloads', 'record', 'state.json'].map((n) => join(BASE, n)));
   }
   let dirs = [];
   try {

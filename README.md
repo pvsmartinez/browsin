@@ -35,7 +35,8 @@ aparecer na tela) com perfil descartável em `/tmp/browsin/<sessão>`, dirigido 
 
 **Requisitos: macOS (Apple Silicon ou Intel) e Node 22+.** Não há dependência de npm para
 instalar: o `WebSocket` global do Node 22 é a única coisa que um cliente CDP precisa, e os dois
-Chromium vêm direto do CDN Chrome-for-Testing do Google.
+Chromium vêm direto do CDN Chrome-for-Testing do Google. O comando opcional `record stop` usa
+`ffmpeg` (`brew install ffmpeg`) para montar GIF/MP4; todo o restante funciona sem ele.
 
 ```bash
 git clone git@github.com:pvsmartinez/browsin.git && cd browsin
@@ -139,6 +140,7 @@ Configuração — workspace (`<raiz>/.pi/tools.json`) ou global (`~/.pi/agent/t
 | `network [url]` | toda request com o status code, no nível do protocolo |
 | `snap [--clip SEL] [--full] [--jpeg]` | screenshot; default viewport em 1x |
 | `pdf [url] [--format a4\|a3] [--landscape]` | imprime honrando `@page` e quebra de página |
+| `record start\|status\|stop\|cancel` | grava os estados de um fluxo em GIF/MP4, sem pôr frames no output |
 | `click` · `hover` · `type [--enter]` · `key` · `select` | interação |
 | `upload <sel> <arquivo…>` · `download <sel>` | arquivos entrando e saindo |
 | `drag <de> <para>` \| `drag <sel> --by dx,dy` | canvas, tldraw, blocos |
@@ -149,6 +151,28 @@ Configuração — workspace (`<raiz>/.pi/tools.json`) ou global (`~/.pi/agent/t
 
 Seletores aceitam **CSS** ou **`text=Entrar`** — endereçar pelo que o usuário lê, em vez de
 adivinhar sopa de classe Tailwind. Os dois atravessam **shadow DOM** e **iframe same-origin**.
+
+### Gravar uma demonstração
+
+`record` é propositalmente orientado a agentes: não filma o tempo de raciocínio entre comandos.
+`start` guarda o estado na sessão e captura o primeiro frame; cada comando visual posterior
+(`open`, `click`, `type`, `scroll`, `js` etc.) acrescenta um JPEG em disco; `stop` monta o
+artefato e devolve apenas path e metadados compactos. Não há daemon ou bytes de imagem no stdout.
+
+```bash
+browsin open localhost:5173
+browsin record start --name cadastro --fps 12       # default: cap de 5 min
+browsin click 'text=Criar conta'
+browsin type 'input[name="email"]' aluno@exemplo.com
+browsin key Enter --on 'input[name="email"]' --wait 'location.pathname === "/inicio"'
+browsin record stop -o out/cadastro.gif --width 960 # MP4: extensão .mp4 ou --format mp4
+```
+
+Por default, cada intervalo fica limitado a 1 segundo (`--max-gap`), eliminando as pausas do
+modelo; `--max-gap 0` preserva o tempo real. `--max-seconds 0` remove o cap de cinco minutos.
+`--keep-frames` preserva os JPEGs; sem ele, ficam só o GIF/MP4 e o sidecar `<saída>.json`.
+`record cancel` descarta tudo, e `down` cancela uma gravação ativa. Para o agente, o artefato é o
+path impresso: não leia cada frame de volta para a conversa.
 
 ## Sessões: um browser por agente
 
@@ -199,7 +223,8 @@ lista a tela inteira em ~250 tokens onde um print custa ~1500.
 (`Page.addScriptToEvaluateOnNewDocument` → `window.__browsin`). Cada invocação do CLI é um
 processo curto que ataca a mesma aba e drena o buffer — não existe processo de fundo guardando
 estado, e o que o CDP zera ao desconectar (viewport, coletor) é restaurado no attach a partir do
-`state.json` da sessão.
+`state.json` da sessão. `record` preserva essa decisão: os próprios comandos capturam keyframes;
+não há gravador residente entre uma ação e outra.
 
 **Uma resolução de seletor para todos os comandos.** `text=`, shadow DOM e iframe vivem num só
 helper injetado (`window.__bq`), que devolve também o **offset do frame** — é o que faz um clique
@@ -208,7 +233,7 @@ por coordenada acertar um botão dentro de um iframe. Comando novo herda tudo is
 ## Testes
 
 ```bash
-test/suite.sh     # 83 casos, incluindo os que só quebram em documento real
+test/suite.sh     # suíte de aceitação, incluindo os casos que só quebram em documento real
 ```
 
 A bateria cobre console/rede/recurso, snapshot, os quatro modos de `snap`, PDF paginado, diálogo

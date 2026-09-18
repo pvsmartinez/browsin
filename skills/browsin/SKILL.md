@@ -50,6 +50,10 @@ browsin js '<expr>'
 # capturar
 browsin snap [--clip SEL] [--pad px] [--full] [--jpeg] [--dpr N] [--name X]
 browsin pdf [url] [--format a4|a3|letter] [--landscape] [--css-page-size] [--margin in]
+browsin record start [--name X] [--fps N] [--quality N] [--max-seconds N]
+browsin record status
+browsin record stop [-o saida.gif|saida.mp4] [--width N] [--max-gap s] [--keep-frames]
+browsin record cancel
 
 # agir
 browsin click <sel> · hover <sel> · type <sel> <texto> [--enter] [--append]
@@ -93,7 +97,24 @@ browsin download 'text=Baixar'
 
 # um componente só
 browsin snap --clip '[data-testid="card"]' --pad 16
+
+# demonstração animada sem mandar uma sequência de screenshots ao modelo
+browsin record start --name fluxo --fps 12
+browsin click 'text=Começar'
+browsin type 'input[name="message"]' 'Hello!'
+browsin key Enter --on 'input[name="message"]' --wait 'document.querySelector(".reply")'
+browsin record stop -o out/fluxo.gif --width 960
 ```
+
+## Gravação e orçamento de contexto
+
+`record` não filma o tempo de parede: captura um keyframe inicial e outro ao fim de cada comando
+visual. Assim a pausa do agente entre `click` e `type` não vira vídeo; `--max-gap` limita cada
+intervalo a 1 segundo por default. O resultado é arquivo + sidecar JSON, nunca frames no output.
+Prefira isso quando o entregável for uma demonstração animada. Não leia cada JPEG nem o GIF de
+volta na conversa; valide duração/frames com `ffprobe` e só peça pixel de um frame específico se
+houver uma dúvida estética. `record stop` requer `ffmpeg`; `record cancel` e `down` descartam uma
+gravação ativa.
 
 ## Armadilhas
 
@@ -114,7 +135,8 @@ browsin snap --clip '[data-testid="card"]' --pad 16
 - **iframe cross-origin é invisível**; same-origin funciona, com offset de coordenada correto.
 - **`browsin down` ao terminar** — senão o Chromium fica de pé (~150 MB). Se outra IA trabalha em
   paralelo, `down` mata só a *sua* sessão; `down --all --fresh` limpa tudo. Sessão ociosa por mais
-  de uma hora é ceifada sozinha.
+  de uma hora é ceifada sozinha. `down` também cancela a gravação ativa; rode `record stop` antes
+  dele se quiser preservar o GIF/MP4.
 - **Uma sessão, um browser.** Dentro do pi cada sessão e cada run de subagente ganha a sua
   (`PI_SESSION_ID`), então agentes paralelos não brigam pela mesma aba. Fora do pi — codex, Claude
   Code, shell — a sessão vem da aba do terminal (`TERM_SESSION_ID`); para separar dois fluxos na
