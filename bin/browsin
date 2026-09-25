@@ -49,7 +49,7 @@ const parse = (argv) => {
 
 const COMMANDS = {
   check: c.cmdCheck, open: c.cmdOpen, reload: c.cmdReload, back: c.cmdBack,
-  snapshot: c.cmdSnapshot, dom: c.cmdDom, js: c.cmdJs, logs: c.cmdLogs, network: c.cmdNetwork,
+  snapshot: c.cmdSnapshot, dom: c.cmdDom, text: c.cmdText, js: c.cmdJs, logs: c.cmdLogs, network: c.cmdNetwork,
   snap: c.cmdSnap, pdf: c.cmdPdf,
   click: c.cmdClick, hover: c.cmdHover, type: c.cmdType, key: c.cmdKey, select: c.cmdSelect,
   upload: c.cmdUpload, download: c.cmdDownload, drag: c.cmdDrag, scroll: c.cmdScroll,
@@ -58,7 +58,7 @@ const COMMANDS = {
 };
 
 const ALIASES = { snaps: 'snapshot', ss: 'snapshot', shot: 'snap', screenshot: 'snap', pic: 'snap',
-  eval: 'js', stop: 'down', quit: 'down' };
+  eval: 'js', txt: 'text', stop: 'down', quit: 'down' };
 
 const USAGE = `browsin — headless browser for coding agents. Text first, pixels on request.
 
@@ -67,6 +67,7 @@ navigate   check <url|file>      navigate + problems + network + screenshot, one
            reload [--hard] · back
 observe    snapshot              what is on screen, as actionable selectors  <- start here
            dom <sel>             rect, visibility, computed styles, html
+           text [sel]            innerText of the element (default body), normalised, --limit N
            js '<expr>'           evaluate in the page
            logs [--all]          console, exceptions, failed fetch/XHR
            network [url]         every request with its status code
@@ -79,7 +80,8 @@ act        click <sel> · hover <sel> · type <sel> <text> [--enter]
            drag <fromSel> <toSel> | drag <sel> --by dx,dy
            scroll <y|top|bottom|selector>
 manage     viewport [1280x800|iphone|ipad|desktop|wide] [--dpr N] [--mobile]
-           login [url]           visible window to sign in by hand, once
+           login [url] [--note "why"]     visible window to sign in by hand, once; --note shows an
+                                  interstitial first, explaining to the user why the window opened
            status · doctor · gc · down [--fresh] [--all]
 record     record start [--name X] [--fps N] [--quality N] [--max-seconds N|0]
            record status · record stop [-o path.gif|path.mp4] [--max-gap s] [--keep-frames]

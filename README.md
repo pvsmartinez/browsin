@@ -135,6 +135,7 @@ Configuração — workspace (`<raiz>/.pi/tools.json`) ou global (`~/.pi/agent/t
 | `open <url\|arquivo>` · `reload [--hard]` · `back` | navegação |
 | `snapshot` | **comece aqui**: o que tem na tela, como seletores acionáveis |
 | `dom <sel>` | rect, visibilidade, estilos computados, `outerHTML` truncado |
+| `text [sel]` | `innerText` do elemento (default `body`), whitespace normalizado; `--limit N` trunca, `--nth N` desempata |
 | `js '<expr>'` | avalia na página (promise resolvida, exceção vira erro de verdade) |
 | `logs [--all]` | console, exceção, rejection, 4xx/5xx e recurso que falhou |
 | `network [url]` | toda request com o status code, no nível do protocolo |
@@ -146,11 +147,20 @@ Configuração — workspace (`<raiz>/.pi/tools.json`) ou global (`~/.pi/agent/t
 | `drag <de> <para>` \| `drag <sel> --by dx,dy` | canvas, tldraw, blocos |
 | `scroll <y\|top\|bottom\|seletor>` | posiciona a página |
 | `viewport [1280x800\|iphone\|ipad\|desktop\|wide]` | persiste entre chamadas |
-| `login [url]` | janela **visível** para autenticar à mão, uma vez |
+| `login [url] [--note "motivo"]` | janela **visível** para autenticar à mão, uma vez; com `--note`, abre primeiro uma intersticial explicando ao usuário por que a janela surgiu |
 | `status` · `doctor` · `gc` · `down [--fresh\|--all]` | inspeciona / mata (e opcionalmente desloga) |
 
 Seletores aceitam **CSS** ou **`text=Entrar`** — endereçar pelo que o usuário lê, em vez de
 adivinhar sopa de classe Tailwind. Os dois atravessam **shadow DOM** e **iframe same-origin**.
+
+Para ler uma página sem screenshot, `text` devolve o `innerText` normalizado (linhas em branco
+colapsadas) — muito mais barato em tokens que pixel ou `outerHTML`:
+
+```bash
+browsin text                          # página inteira (default: body, cap de 2000 chars)
+browsin text 'main article' --limit 400
+browsin text '.card' --nth 1          # 2º match, quando o seletor casa com vários
+```
 
 ### Gravar uma demonstração
 
@@ -248,7 +258,14 @@ antes de mexer em qualquer coisa.
   vazio. `check` avisa (`body renders no text`), mas o conserto é o `--wait`.
 - **Perfil descartável = deslogado.** Todo app cai na tela de login. É a feature. Para portal
   logado, `browsin login <url>` abre uma janela visível uma vez; o cookie fica no perfil do
-  browsin e todo comando headless depois herda.
+  browsin e todo comando headless depois herda. Com `--note "motivo"`, a janela abre primeiro
+  numa intersticial explicando ao humano por que surgiu (com botão "Continue to <url>"; sem
+  URL, pede pra fechar a janela ao terminar) — útil quando o agente roda sem o usuário
+  esperando uma janela na tela:
+
+  ```bash
+  browsin login https://app.exemplo.com --note "Preciso que você autentique no painel X para eu continuar a tarefa."
+  ```
 - **`viewport --dpr` ≠ `snap --dpr`.** O primeiro é o `devicePixelRatio` que a *página* vê (media
   query, `srcset`); o segundo é a densidade do arquivo. O CDP multiplica os dois, então o `snap`
   divide de volta — pedir 1x num viewport @2x não pode render imagem 4x.

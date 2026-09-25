@@ -45,6 +45,7 @@ browsin network [url]            # toda request com status, no nível do protoco
 # entender
 browsin snapshot [--onscreen] [--limit N]
 browsin dom <seletor> [--nth N] [--html N]
+browsin text [seletor] [--limit N] [--nth N]   # innerText normalizado — leia a página sem pixel
 browsin js '<expr>'
 
 # capturar
@@ -64,7 +65,8 @@ browsin scroll <y|top|bottom|seletor>
 
 # gerir
 browsin viewport [1280x800|iphone|ipad|desktop|wide] [--dpr N] [--mobile]
-browsin login [url]              # janela visível, para autenticar à mão uma vez
+browsin login [url] [--note "motivo"]  # janela visível, para autenticar à mão uma vez;
+                               # com --note, abre intersticial explicando o porquê
 browsin status · browsin doctor · browsin gc · browsin down [--fresh|--all]
 ```
 
@@ -95,6 +97,11 @@ browsin viewport wide && browsin scroll 1650 && browsin click 'text=Recursos' &&
 browsin click 'text=Exemplo' --wait 'document.querySelectorAll("svg rect").length > 3'
 browsin download 'text=Baixar'
 
+# ler a página como texto (barato em tokens; shadow DOM e iframe same-origin funcionam)
+browsin text                          # body inteiro, cap de 2000 chars
+browsin text 'main article' --limit 400
+browsin text '.card' --nth 1          # desempata seletor que casa com vários
+
 # um componente só
 browsin snap --clip '[data-testid="card"]' --pad 16
 
@@ -117,8 +124,13 @@ funcionar, e é o que os agentes costumam desconfiar sem razão:
 2. Abra a janela **visível** para o usuário autenticar:
 
    ```bash
-   browsin login https://app.exemplo.com
+   browsin login https://app.exemplo.com --note "Preciso que você autentique no painel X para eu continuar a tarefa."
    ```
+
+   Com `--note`, a janela abre primeiro numa **intersticial** simples ("browsin login" + o
+   motivo + botão "Continue to <url>"); o usuário clica e cai na tela de login. Sem URL
+   passada, a intersticial pede pra fechar a janela ao terminar. Use quando o agente roda sem
+   o usuário estar esperando uma janela surgir na tela.
 
 3. **Espere a confirmação do usuário.** Você não vê a janela dele (é headed, não headless);
    não tente adivinhar que ele terminou — pergunte. Fechar a janela não desloga nada.
@@ -148,6 +160,11 @@ gravação ativa.
 - **Esperar é o problema difícil, não capturar.** Sem `--wait` num SPA você fotografa o `#root`
   vazio. `check` avisa (`body renders no text — app may not have mounted`), mas o `--wait` é o
   conserto.
+- **Seletor não casou? O erro ensina.** `no match` vem com dica: zero match sugere endereçar
+  pelo que o usuário lê (`click 'text=Entrar'`); múltiplos matches dizem quantos e apontam
+  `--nth N` (0-based). Prefira `text=` a adivinhar classe gerada por framework.
+- **`text` normaliza whitespace** (linhas em branco somem) e trunca em 2000 chars por default
+  (`--limit N` para mais/menos) — é proposital: ler página custa tokens.
 - **Portal logado tem receita própria.** Veja "Login de verdade" acima: `browsin login <url>`
   abre uma janela **visível** para o usuário autenticar à mão, uma vez; o cookie fica no perfil
   do browsin (em disco) e todo comando headless depois herda. Nunca peça as credenciais do
@@ -172,4 +189,4 @@ gravação ativa.
 - **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
   qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (83 casos).
+- **Antes de mexer no browsin**, rode `test/suite.sh` (121 casos).

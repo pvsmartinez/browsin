@@ -49,6 +49,15 @@ t "dom por CSS"                   '"tag": "div"'               browsin dom '#alv
 t "dom por texto"                 'Bloco alvo'                 browsin dom 'text=Bloco alvo'
 t "dom sem match é claro"         'no match'                   browsin dom '#nada-aqui'
 
+echo "— texto (text) —"
+t "text extrai body"            'Bloco alvo pro --clip' browsin text
+t "text seletor"                'Clicar'                browsin text '#b'
+t "text --nth"                  'Clicar'                browsin text '.card' --nth 1
+t "text --limit trunca"         'more chars'            browsin text --limit 30
+t "text sem match"              'no match for'          browsin text '#nada'
+t "text sem match ensina text=" "hint.*text="           browsin text '#nada'
+t "alias txt"                   'Clicar'                browsin txt '#b'
+
 echo "— pixels —"
 t "snap viewport 1x"   '1280x800px'  browsin snap --name s1
 t "snap dpr 2"         '2560x1600px' browsin snap --dpr 2 --name s2
@@ -97,8 +106,10 @@ t "record cancel limpa estado" 'not recording' browsin record status
 
 echo "— interação —"
 t "click"                 'clicado|click '     browsin click '#b'
-t "click confirma efeito" 'clicado!'           browsin js "document.getElementById('out').textContent"
+t "click sem match ensina text="   'hint.*text='  browsin click '#nada'
+t "click multi-match aponta --nth" 'hint.*--nth'  browsin click 'div' --nth 50
 t "type"                  'ditado'             browsin type '#inp' 'ditado pelo agente'
+t "type sem match ensina text="    'hint.*text='  browsin type '#nada' 'x'
 t "type --append"         'ditado pelo agente mais' browsin type '#inp' ' mais' --append
 t "key Tab"               'key   Tab'          browsin key Tab
 t "key com modificador"   'shift'              browsin key ArrowDown --mod shift
@@ -125,6 +136,10 @@ t "shadow DOM: dom"          '"tag": "button"'      browsin dom '#shadowbtn'
 t "shadow DOM: click"        'click #shadowbtn'     browsin click '#shadowbtn'
 t "iframe: dom"              'Botão no iframe'      browsin dom '#inner'
 t "iframe: click"            'click #inner'         browsin click '#inner'
+t "text atravessa shadow DOM" 'Botão sombra'        browsin text '#shadowbtn'
+t "text no iframe"           'iframe ok'            browsin text '#ip'
+# multi-match com --nth já coberto no bloco de texto ('.card' --nth 1); as rows
+deste fixture mutam nos testes de drag/select acima, então aqui seria frágil.
 
 echo "— PDF e download —"
 t "pdf a4"          'A4'                     browsin pdf $SP/hard.html --name p-a4
@@ -134,6 +149,29 @@ browsin open $SP/download.html >/dev/null
 browsin click 'text=Exemplo' --wait 'document.querySelectorAll("svg rect").length > 3' >/dev/null
 t "download .bpmn"  'completed'              browsin download 'text=Baixar .bpmn'
 t "download sem alvo de download" 'no download|never completed' browsin download 'text=Limpar'
+
+echo "— login --note (intersticial pura, sem janela) —"
+login_html() { node --input-type=module -e "
+  import { buildLoginNoteHtml } from '$HERE/../src/login-note.mjs';
+  process.stdout.write(buildLoginNoteHtml(process.argv[1], process.argv[2] === '' ? null : process.argv[2]));
+" "$1" "$2"; }
+NOTE_HTML="$(login_html 'Preciso que você autentique no painel de faturas' 'https://app.exemplo.com/login')"
+if echo "$NOTE_HTML" | grep -q 'painel de faturas' && echo "$NOTE_HTML" | grep -q 'href="https://app.exemplo.com/login"' && echo "$NOTE_HTML" | grep -q 'browsin login'; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "login note: contém a note e o href do destino"
+else
+  FAIL=$((FAIL+1)); FAILED+=("login note: contém a note e o href do destino"); printf '  FAIL %s\n' "login note"
+fi
+NOTE_HTML2="$(login_html 'só explicar' '')"
+if echo "$NOTE_HTML2" | grep -q 'Close this window when done' && ! echo "$NOTE_HTML2" | grep -q 'href='; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "login note sem url: pede pra fechar a janela"
+else
+  FAIL=$((FAIL+1)); FAILED+=("login note sem url: pede pra fechar a janela"); printf '  FAIL %s\n' "login note sem url"
+fi
+if echo "$(login_html '<script>alert(1)</script>' 'https://a.com/?q=<x>')" | grep -q '&lt;script&gt;'; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "login note escapa html da note"
+else
+  FAIL=$((FAIL+1)); FAILED+=("login note escapa html da note"); printf '  FAIL %s\n' "login note escapa"
+fi
 
 echo "— gestão —"
 t "viewport preset iphone" '390x844 @2x mobile' browsin viewport iphone

@@ -2,6 +2,7 @@ import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { connect, launch, shutdown, shutdownAll, status as browserStatus } from './browser.mjs';
 import { SNAPSHOT } from './query.mjs';
+import { buildLoginNoteHtml } from './login-note.mjs';
 import { gc, listSessions } from './gc.mjs';
 import { afterAction, cancelRecording, startRecording, statusRecording, stopRecording } from './recording.mjs';
 import { readState, writeState, findBinary, SHOTS, DOWNLOADS, PROFILE, BROWSERS, BASE, SESSION, ensureDirs } from './paths.mjs';
@@ -82,8 +83,22 @@ const findEl = async (cdp, sel, { nth = 0, scroll = false } = {}) => {
     });
   })()`);
   const box = JSON.parse(raw);
-  if (!box.found) throw new Error(`no match for ${sel} (${box.matches} in DOM, ${box.visibleMatches} visible)`);
+  if (!box.found) throw noMatchError(sel, box);
   return box;
+};
+
+/**
+ * No-match errors teach the next attempt instead of just reporting: `text=`
+ * when nothing matched at all (address by what the user reads), `--nth` when
+ * several elements share the selector. Same exit code, just a better message.
+ */
+const noMatchError = (sel, box) => {
+  const base = `no match for ${sel} (${box.matches} in DOM, ${box.visibleMatches} visible)`;
+  if (Number(box.matches) === 0)
+    return new Error(`${base}\nhint  if it is on screen, address it by the visible label: 'text=<text>'`);
+  if (Number(box.matches) > 1)
+    return new Error(`${base}\nhint  ${box.matches} elements match — pick one with --nth N (0-based)`);
+  return new Error(base);
 };
 
 /** A live element handle, for the CDP calls that need one (file inputs). */
@@ -308,6 +323,29 @@ export const cmdDom = async (args) => {
   return raw;
 };
 
+/**
+ * innerText of an element, whitespace normalised (blank lines collapse away)
+ * and capped — the token-cheap way to read a page. Default selector: body.
+ */
+export const cmdText = async (args) => {
+  const sel = args._[0] || 'body';
+  const { cdp } = await connect();
+  const raw = await cdp.eval(`(() => {
+    const q = window.__bq(${JSON.stringify(sel)}, ${Number(args.nth || 0)});
+    if (!q.el) return JSON.stringify({ matches: q.matches, visibleMatches: q.visibleMatches });
+    return JSON.stringify({ tag: q.el.tagName.toLowerCase(), text: q.el.innerText });
+  })()`);
+  cdp.close();
+  const data = JSON.parse(raw);
+  if (!data.tag) throw noMatchError(sel, data);
+  const text = (data.text || '')
+    .replace(/[ \t\r]+/g, ' ').replace(/ ?\n ?/g, '\n').replace(/\n+/g, '\n').trim();
+  const limit = Number(args.limit ?? 2000);
+  if (limit > 0 && text.length > limit)
+    return `${text.slice(0, limit)} … (${text.length - limit} more chars)`;
+  return text;
+};
+
 export const cmdJs = async (args) => {
   const expr = args._.join(' ');
   if (!expr) throw new Error("usage: browsin js '<expression>'");
@@ -488,18 +526,23 @@ export const cmdType = async (args) => {
   const text = rest.join(' ');
   if (!sel || !text) throw new Error('usage: browsin type <selector> <text>');
   const { cdp } = await connect();
-  const focused = await cdp.eval(`(() => {
+  const focused = JSON.parse(await cdp.eval(`(() => {
     const q = window.__bq(${JSON.stringify(sel)}, ${Number(args.nth || 0)});
-    if (!q.el) return false;
+    if (!q.el) return JSON.stringify({ ok: false, matches: q.matches, visibleMatches: q.visibleMatches });
     q.el.scrollIntoView({ block: 'center' });
     q.el.focus();
     if (!${!!args.append} && 'value' in q.el) {
       q.el.value = '';
       q.el.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    return document.activeElement === q.el || q.el.contains(document.activeElement);
-  })()`);
-  if (!focused) { cdp.close(); throw new Error(`type could not focus: ${sel}`); }
+    return JSON.stringify({ ok: document.activeElement === q.el || q.el.contains(document.activeElement) });
+  })()`));
+  if (!focused.ok) {
+    cdp.close();
+    throw focused.matches === undefined
+      ? `type could not focus: ${sel}`
+      : noMatchError(sel, focused);
+  }
   await cdp.send('Input.insertText', { text });
   if (args.enter) await pressKey(cdp, 'Enter');
   await settle(cdp);
@@ -826,16 +869,23 @@ export const cmdDownload = async (args) => {
  */
 export const cmdLogin = async (args) => {
   const url = args._[0] ? resolveTarget(args._[0]) : null;
+  const note = args.note ? String(args.note) : null;
   const state = readState();
   if (!state.headed) await shutdown();
   await launch({ headed: true });
   const { cdp } = await connect({ headed: true });
-  if (url) await navigate(cdp, url, { timeout: Number(args.timeout || 30000) }).catch(() => {});
+  // With --note the visible window opens on a plain interstitial explaining to
+  // the human why it just appeared; "Continue" then takes the tab to the URL.
+  const start = note
+    ? `data:text/html;charset=utf-8,${encodeURIComponent(buildLoginNoteHtml(note, url))}`
+    : url;
+  if (start) await navigate(cdp, start, { timeout: Number(args.timeout || 30000) }).catch(() => {});
   const head = await pageHead(cdp);
   await afterAction(cdp);
   cdp.close();
   return [
     `login window open (headed chromium) — ${head.url}`,
+    ...(note ? [`note  interstitial shown first: "${note}" — the user reads the why before the site loads`] : []),
     'The USER signs in by hand in that visible window. Never type credentials via headless',
     'commands, never ask for them in chat — just tell the user why the window is open and',
     'WAIT until they confirm. You cannot see a headed window; do not guess they are done.',
