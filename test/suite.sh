@@ -40,6 +40,7 @@ t "network lista tudo"                        'request\(s\)'         browsin net
 t "reload"                                    'reload'               browsin reload
 t "js avalia"                                 'Teste browsin'        browsin js 'document.title'
 t "js propaga erro da página"                 'browsin js:'          browsin js 'null.explode'
+t "alias eval é js"                           'Teste browsin'        browsin eval 'document.title'
 
 echo "— entender a tela —"
 t "snapshot lista controles"      '\[button\]'                browsin snapshot
@@ -55,6 +56,7 @@ t "snap clip"          'snap  /tmp'  browsin snap --clip '#alvo' --name s3
 t "snap clip + pad"    'snap  /tmp'  browsin snap --clip '#alvo' --pad 20 --name s4
 t "snap full"          'snap  /tmp'  browsin snap --full --name s5
 t "snap jpeg"          '\.jpg'       browsin snap --jpeg --quality 60 --name s6
+t "alias screenshot é snap" 'snap  /tmp' browsin screenshot --name s7
 t "snap clip sem match falha" 'no match' browsin snap --clip '#nada'
 
 echo "— gravação —"
@@ -139,6 +141,15 @@ t "viewport explícito"     '820x1180'           browsin viewport 820x1180 --dpr
 t "viewport inválido"      'usage'              browsin viewport 99banana
 t "status"                 'headless shell'     browsin status
 t "comando desconhecido"   'unknown command'    browsin banana
+t "desconhecido sugere próximo" 'did you mean.*snap' browsin snsp
+t "desconhecido aponta --help"  'browsin --help'     browsin banana
+t "url no lugar de comando" 'looks like a URL'   browsin localhost:59999
+t "arquivo no lugar de comando" 'looks like a' browsin package.json
+t "--help lista comandos"    'as actionable selectors' browsin --help
+t "-h é help"                'as actionable selectors' browsin -h
+t "help é help"              'as actionable selectors' browsin help
+t "--version imprime versão" 'browsin [0-9]+(\.[0-9]+)+' browsin --version
+t "-v imprime versão"        'browsin [0-9]+(\.[0-9]+)+' browsin -v
 t "arquivo inexistente"    'no such file'       browsin open ./nao/existe.html
 t "url morta"              'ERR_'               browsin open http://127.0.0.1:59998
 browsin record start --name down-cancels >/dev/null

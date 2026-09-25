@@ -15,8 +15,9 @@ if (major < 22 || typeof WebSocket === 'undefined') {
 }
 
 const c = await import('../src/commands.mjs');
+const fs = await import('node:fs');
 
-const BOOLEAN = new Set(['full', 'mobile', 'all', 'no-snap', 'no-background', 'help', 'landscape',
+const BOOLEAN = new Set(['full', 'mobile', 'all', 'no-snap', 'no-background', 'help', 'version', 'landscape',
   'jpeg', 'hard', 'fresh', 'net', 'failed', 'onscreen', 'append', 'enter', 'css-page-size', 'keep-frames']);
 
 const camel = (s) => s.replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
@@ -37,6 +38,8 @@ const parse = (argv) => {
       continue;
     }
     if (tok === '-o') { args.o = argv[++i]; continue; }
+    if (tok === '-h') { args.help = true; continue; }
+    if (tok === '-v') { args.version = true; continue; }
     args._.push(tok);
   }
   // `--css-page-size` is read as cssPageSize by the command.
@@ -54,7 +57,8 @@ const COMMANDS = {
   record: c.cmdRecord, gc: c.cmdGc, down: c.cmdDown,
 };
 
-const ALIASES = { snaps: 'snapshot', ss: 'snapshot', shot: 'snap', pic: 'snap', stop: 'down', quit: 'down' };
+const ALIASES = { snaps: 'snapshot', ss: 'snapshot', shot: 'snap', screenshot: 'snap', pic: 'snap',
+  eval: 'js', stop: 'down', quit: 'down' };
 
 const USAGE = `browsin — headless browser for coding agents. Text first, pixels on request.
 
@@ -95,19 +99,63 @@ Never touches your real Chrome: headless shell, throwaway profile in /tmp/browsi
 One browser per session (BROWSIN_SESSION, else PI_SESSION_ID, else "default"); sessions
 idle past BROWSIN_TTL_MIN (default 60) are reaped automatically — see browsin gc.`;
 
-const [rawName, ...rest] = process.argv.slice(2);
+// Levenshtein over the command + alias list, so a typo gets a nudge instead of
+// a wall of usage text. Suggests only when close (<= 2 edits).
+const editDistance = (a, b) => {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let carry = row[0]; row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, carry + (a[i - 1] === b[j - 1] ? 0 : 1));
+      carry = tmp;
+    }
+  }
+  return row[b.length];
+};
+
+const suggestCommand = (word) => {
+  const candidates = [...Object.keys(COMMANDS), ...Object.keys(ALIASES)];
+  let best = null, bestD = Infinity;
+  for (const cand of candidates) {
+    const d = editDistance(word.toLowerCase(), cand.toLowerCase());
+    if (d < bestD) { bestD = d; best = cand; }
+  }
+  return bestD <= 2 ? best : null;
+};
+
+const [firstArg, ...rest] = process.argv.slice(2);
+// help/version may arrive as the first token itself, not as a flag of a command.
+const HELP_TOKENS = new Set(['help', '--help', '-h']);
+const VERSION_TOKENS = new Set(['--version', '-v']);
+const rawName = HELP_TOKENS.has(firstArg) || VERSION_TOKENS.has(firstArg) ? undefined : firstArg;
 const name = ALIASES[rawName] || rawName;
 const args = parse(rest);
 
+if (args.version || VERSION_TOKENS.has(firstArg)) {
+  const { version } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  console.log(`browsin ${version}`);
+  process.exit(0);
+}
+
 if (!name || name === 'help' || args.help) {
   console.log(USAGE);
-  process.exit(name && name !== 'help' ? 1 : 0);
+  process.exit(name && name !== 'help' && !HELP_TOKENS.has(firstArg) ? 1 : 0);
 }
 
 const fn = COMMANDS[name];
 if (!fn) {
-  console.error(`browsin: unknown command "${rawName}"\n`);
-  console.error(USAGE);
+  // The first arg may be the target itself, mistyped as a command: a URL
+  // ("localhost:5173", "http://…") or a path that exists on disk.
+  if (/:\/\//.test(rawName) || /^\w+:\d+/.test(rawName) || fs.existsSync(rawName)) {
+    console.error(`browsin: "${rawName}" looks like a URL or file, not a command
+  try: browsin check ${rawName}   (or: browsin open ${rawName})`);
+  } else {
+    const sug = suggestCommand(rawName);
+    const resolved = sug && ALIASES[sug] ? ` (alias for ${ALIASES[sug]})` : '';
+    console.error(`browsin: unknown command "${rawName}"${sug ? `\n  did you mean "browsin ${sug}"?${resolved}` : ''}
+  run browsin --help for the command list`);
+  }
   process.exit(1);
 }
 

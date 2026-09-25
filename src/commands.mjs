@@ -191,7 +191,7 @@ export const cmdCheck = async (args) => {
   const out = [`check ${head.url}`, `title ${head.title || '(untitled)'}`,
     `view  ${viewport.width}x${viewport.height} @${viewport.dpr}x · ${stats.nodes} nodes · page ${stats.scrollHeight}px tall`,
     ...notes.map((n) => `note  ${n}`), ...dialogLines(dialogs)];
-  if (stats.emptyBody) out.push('warn  body renders no text — app may not have mounted');
+  if (stats.emptyBody) out.push(`warn  body renders no text — app may not have mounted; retry with --wait, e.g. browsin check <url> --wait 'document.querySelector("#root")?.children.length > 0'`);
   if (stats.overflowX) out.push('warn  horizontal overflow at this viewport');
   out.push(...renderNetwork(net, { all: !!args.net }), ...logSummary(logs));
 
