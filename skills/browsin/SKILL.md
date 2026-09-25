@@ -106,6 +106,33 @@ browsin key Enter --on 'input[name="message"]' --wait 'document.querySelector(".
 browsin record stop -o out/fluxo.gif --width 960
 ```
 
+## Login de verdade (portal que exige conta)
+
+O perfil é descartável, mas é **em disco** — não na janela. Isso é o que faz o fluxo abaixo
+funcionar, e é o que os agentes costumam desconfiar sem razão:
+
+1. A tarefa cai numa tela de login. **Não preencha credenciais via `type`** e não peça senha no
+   chat — diga ao usuário, numa frase, por que precisa da janela ("preciso que você autentique
+   no painel X, vou abrir a janela do browsin").
+2. Abra a janela **visível** para o usuário autenticar:
+
+   ```bash
+   browsin login https://app.exemplo.com
+   ```
+
+3. **Espere a confirmação do usuário.** Você não vê a janela dele (é headed, não headless);
+   não tente adivinhar que ele terminou — pergunte. Fechar a janela não desloga nada.
+4. Siga headless normalmente. O próximo comando relança o browser no **mesmo perfil** e já
+   entra autenticado:
+
+   ```bash
+   browsin check https://app.exemplo.com/painel
+   ```
+
+Os cookies ficam no perfil do browsin até `down --fresh`; `down` comum, `gc` e o TTL de sessão
+ociosa não os tocam. Se `doctor` mostrar `login unavailable`, a instalação foi `--shell-only`
+(sem camada de UI) — rode `scripts/install-browsers.sh` para ter o chromium headed.
+
 ## Gravação e orçamento de contexto
 
 `record` não filma o tempo de parede: captura um keyframe inicial e outro ao fim de cada comando
@@ -121,10 +148,10 @@ gravação ativa.
 - **Esperar é o problema difícil, não capturar.** Sem `--wait` num SPA você fotografa o `#root`
   vazio. `check` avisa (`body renders no text — app may not have mounted`), mas o `--wait` é o
   conserto.
-- **Perfil descartável ⇒ deslogado.** Todo app cai na tela de login — é a feature. Para portal
-  logado sem API, `browsin login <url>` abre uma janela visível **uma vez**; o cookie fica no perfil
-  do browsin e todo comando headless depois herda. Nunca peça as credenciais do usuário nem as
-  procure em arquivo do projeto.
+- **Portal logado tem receita própria.** Veja "Login de verdade" acima: `browsin login <url>`
+  abre uma janela **visível** para o usuário autenticar à mão, uma vez; o cookie fica no perfil
+  do browsin (em disco) e todo comando headless depois herda. Nunca peça as credenciais do
+  usuário, nem as digite via `type`, nem as procure em arquivo do projeto.
 - **`viewport --dpr` ≠ `snap --dpr`.** O primeiro é o `devicePixelRatio` que a *página* vê (media
   query, `srcset`); o segundo é a densidade do arquivo de saída.
 - **`logs` drena** — ler duas vezes não repete. `click`/`key`/`type` também drenam ao reportar.

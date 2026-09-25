@@ -828,16 +828,20 @@ export const cmdLogin = async (args) => {
   const url = args._[0] ? resolveTarget(args._[0]) : null;
   const state = readState();
   if (!state.headed) await shutdown();
-  const info = await launch({ headed: true });
+  await launch({ headed: true });
   const { cdp } = await connect({ headed: true });
   if (url) await navigate(cdp, url, { timeout: Number(args.timeout || 30000) }).catch(() => {});
   const head = await pageHead(cdp);
   await afterAction(cdp);
   cdp.close();
   return [
-    `login window open${info.started ? '' : ' (already running)'} — ${head.url}`,
-    'Sign in by hand in that window, then leave it open or close it.',
-    'Cookies land in browsin\'s throwaway profile, so the next headless command is authenticated.',
-    'Run `browsin down` when finished, or `browsin down --fresh` to log out everywhere.',
+    `login window open (headed chromium) — ${head.url}`,
+    'The USER signs in by hand in that visible window. Never type credentials via headless',
+    'commands, never ask for them in chat — just tell the user why the window is open and',
+    'WAIT until they confirm. You cannot see a headed window; do not guess they are done.',
+    'Closing the window does NOT log out: cookies live on disk in browsin\'s profile, not in',
+    'the window. Your next headless command relaunches on the same profile, already',
+    'authenticated — the task continues exactly where it stopped.',
+    'Cookies survive until `browsin down --fresh` (plain `down`, `gc` and idle TTL keep them).',
   ].join('\n');
 };
