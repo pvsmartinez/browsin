@@ -168,10 +168,16 @@ gravação ativa.
   (`--limit N` para mais/menos) — é proposital: ler página custa tokens.
 - **Portal logado tem receita própria.** Veja "Login de verdade" acima: `browsin login <url>`
   abre uma janela **visível** para o usuário autenticar à mão, uma vez; o cookie fica no perfil
-  do browsin (em disco) e todo comando headless depois herda. Nunca peça as credenciais do
-  usuário, nem as digite via `type`, nem as procure em arquivo do projeto.
+  do browsin (em disco) e todo comando headless depois herda. O primeiro comando comum depois do
+  `login` **fecha a janela** e relança headless no mesmo perfil — a página volta a `about:blank`,
+  então navegue de novo. Nunca peça as credenciais do usuário, nem as digite via `type`, nem as
+  procure em arquivo do projeto.
 - **`viewport --dpr` ≠ `snap --dpr`.** O primeiro é o `devicePixelRatio` que a *página* vê (media
   query, `srcset`); o segundo é a densidade do arquivo de saída.
+- **`snap` do viewport não reflui a página.** O print padrão (a área visível) não usa
+  `captureBeyondViewport`, então não dispara resize — apps que redesenham no resize (canvas,
+  Blockly) ficam intactos. `--clip`/`--full` precisam dele para renderizar o que está fora da tela,
+  e aí a página é relayoutada uma vez.
 - **`logs` drena** — ler duas vezes não repete. `click`/`key`/`type` também drenam ao reportar.
 - **`--clip 'text=…'` pega o menor elemento com aquele texto**, quase sempre menor que a caixa que
   você queria. Para print, use seletor CSS do container (ou `--pad`).
@@ -200,4 +206,4 @@ gravação ativa.
 - **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
   qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (132 casos).
+- **Antes de mexer no browsin**, rode `test/suite.sh` (134 casos).

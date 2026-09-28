@@ -285,9 +285,16 @@ antes de mexer em qualquer coisa.
   ```bash
   browsin login https://app.exemplo.com --note "Preciso que você autentique no painel X para eu continuar a tarefa."
   ```
+
+  O primeiro comando comum depois do `login` fecha a janela visível e relança headless no mesmo
+  perfil; a página volta a `about:blank` (o cookie, não a navegação, é o que persiste).
 - **`viewport --dpr` ≠ `snap --dpr`.** O primeiro é o `devicePixelRatio` que a *página* vê (media
   query, `srcset`); o segundo é a densidade do arquivo. O CDP multiplica os dois, então o `snap`
   divide de volta — pedir 1x num viewport @2x não pode render imagem 4x.
+- **`snap` do viewport não reflui a página.** O print padrão (a área visível) captura sem
+  `captureBeyondViewport`, então não dispara `resize` — apps que redesenham no resize (canvas,
+  Blockly) ficam intactos. `--clip`/`--full` usam `captureBeyondViewport` para renderizar o que
+  está fora da tela, e aí a página é relayoutada uma vez.
 - **`logs` drena.** Ler duas vezes não repete. E qualquer comando que age (`click`, `key`, `type`)
   também drena ao reportar.
 - **`--clip 'text=…'` pega o menor elemento que contém o texto**, quase sempre menor do que a

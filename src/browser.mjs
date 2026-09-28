@@ -75,10 +75,19 @@ export const launch = async ({ headed = false } = {}) => {
 
   const state = readState();
   const home = state.port || PORT;
-  const running = await probe(home);
+  let running = await probe(home);
   if (running && isAlive(state.pid)) {
-    // Our own record of a browser we spawned.
-    return { started: false, port: home, version: running.Browser };
+    if (!headed && state.headed) {
+      // A window opened by `login` must not silently drive a normal command.
+      // Close it and fall through to a headless relaunch on the same profile:
+      // cookies persist, the user's screen is freed, and a plain command is
+      // actually headless.
+      await shutdown();
+      running = null;
+    } else {
+      // Our own record of a browser we spawned.
+      return { started: false, port: home, version: running.Browser };
+    }
   }
   if (running) {
     // State may have vanished while the browser lived: re-record the pid, or

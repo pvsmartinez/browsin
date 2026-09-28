@@ -73,6 +73,15 @@ t "snap jpeg"          '\.jpg'       browsin snap --jpeg --quality 60 --name s6
 t "alias screenshot é snap" 'snap  /tmp' browsin screenshot --name s7
 t "snap clip sem match falha" 'no match' browsin snap --clip '#nada'
 
+# Um snap do viewport não pode reflowmar a página: sem captureBeyondViewport,
+# não há resize (o --full/--clip continua usando, para renderizar o que está
+# fora da tela).
+browsin viewport laptop >/dev/null
+browsin open $SP/resize.html >/dev/null
+browsin js 'window.__ev=[]' >/dev/null
+t "snap viewport não dispara resize" '^\[\]$' browsin js 'JSON.stringify(window.__ev)'
+browsin open $SP/basic.html >/dev/null
+
 echo "— gravação —"
 RECORD_OUT="$BROWSIN_DIR/demo/flow.gif"
 t "record start" 'started.*frame' browsin record start --name flow --fps 8 --max-seconds 30
@@ -215,6 +224,20 @@ t "aba da B é a da B"             'Página alta'        sess suite-b js 'docume
 t "status lista as outras vivas"  'também vivas'       sess suite-a status
 t "PI_SESSION_ID vira sessão"     'sess  pi-auto-42'   pi_sess pi-auto-42 status
 t "TERM_SESSION_ID vira sessão"   'sess  term-tab-77'  env -u PI_SESSION_ID TERM_SESSION_ID=term-tab-77 BROWSIN_DIR= browsin status
+
+# Depois do `login` (estado headed), um comando comum relança headless no mesmo
+# perfil — a janela visível não é dirigida por baixo.
+sess suite-headed open $SP/basic.html >/dev/null 2>&1
+HPID=$(sess suite-headed status | grep -oE 'pid [0-9]+' | grep -oE '[0-9]+')
+node -e "const fs=require('fs');const f='$BROWSIN_DIR/suite-headed/state.json';const d=JSON.parse(fs.readFileSync(f));d.headed=true;fs.writeFileSync(f,JSON.stringify(d,null,2))"
+sess suite-headed js '1' >/dev/null 2>&1
+NPID=$(sess suite-headed status | grep -oE 'pid [0-9]+' | grep -oE '[0-9]+')
+if [ -n "$HPID" ] && [ "$HPID" != "$NPID" ] && sess suite-headed status | grep -q 'headless shell'; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "login fecha a janela e sobe headless"
+else
+  FAIL=$((FAIL+1)); FAILED+=("login fecha a janela e sobe headless"); printf '  FAIL %s\n' "login fecha a janela e sobe headless (pid $HPID -> $NPID)"
+fi
+sess suite-headed down >/dev/null 2>&1
 
 PA=$(sess suite-a status | grep -oE 'port [0-9]+')
 PB=$(sess suite-b status | grep -oE 'port [0-9]+')

@@ -407,7 +407,12 @@ export const cmdSnap = async (args) => {
   // out: asking for 1x on a @2x mobile viewport must not yield a 4x image.
   const outDpr = Number(args.dpr || 1);
   const scale = outDpr / (viewport.dpr || 1);
-  const params = { format: args.jpeg ? 'jpeg' : 'png', captureBeyondViewport: true };
+  // Only a region that can extend past the viewport (`--clip`, `--full`) needs
+  // captureBeyondViewport: it makes Chrome relayout to render the hidden area,
+  // firing a resize event that reflows resize-reactive pages (canvas, Blockly).
+  // The default shot is exactly the visible area, so it captures with `false`
+  // and leaves the page's layout untouched.
+  const params = { format: args.jpeg ? 'jpeg' : 'png', captureBeyondViewport: !!(args.clip || args.full) };
   if (args.jpeg) params.quality = Number(args.quality || 80);
   let truncated = null;
 

@@ -1,0 +1,9 @@
+<!doctype html><meta charset=utf-8><title>Resize</title>
+<style>body{margin:0;font:20px monospace}.tall{height:2400px;background:repeating-linear-gradient(#fff,#fff 80px,#eee 80px,#eee 81px)}</style>
+<div class="tall"></div>
+<script>
+  // Records resize events so a test can prove that a viewport-sized `snap`
+  // does not make Chrome relayout the page (captureBeyondViewport).
+  window.__ev = [];
+  addEventListener('resize', () => window.__ev.push(innerWidth + 'x' + innerHeight));
+</script>
