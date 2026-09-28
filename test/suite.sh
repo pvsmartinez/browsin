@@ -58,6 +58,11 @@ t "text sem match"              'no match for'          browsin text '#nada'
 t "text sem match ensina text=" "hint.*text="           browsin text '#nada'
 t "alias txt"                   'Clicar'                browsin txt '#b'
 
+# Resistência a argumentos colados: o agente cola a linha inteira do snapshot.
+echo "— resistência de argumentos —"
+t "--nth colado no seletor"     'click \.card'          browsin click '.card --nth 1'
+t "js não serializável não falha" 'não serializável'     browsin js 'window'
+
 echo "— pixels —"
 t "snap viewport 1x"   '1280x800px'  browsin snap --name s1
 t "snap dpr 2"         '2560x1600px' browsin snap --dpr 2 --name s2
@@ -259,6 +264,23 @@ if [ -n "$ORFPID" ] && kill -0 "$ORFPID" 2>/dev/null; then
   FAIL=$((FAIL+1)); FAILED+=("gc mata o browser órfão"); printf '  FAIL %s\n' "gc mata o browser órfão"
 else PASS=$((PASS+1)); printf '  ok   %s\n' "gc mata o browser órfão"; fi
 
+# Órfão sob OUTRO BROWSIN_DIR: invisível ao coletor daquele BASE, mas a
+# varredura de irmãos `browsin*` mata o processo — sem apagar os arquivos do
+# base alheio (o kit preserva shots/ depois de dispor o browser).
+OBASE="$(mktemp -d /tmp/browsin-outro.XXXXXX)"
+( BROWSIN_DIR="$OBASE" browsin open $SP/basic.html ) >/dev/null 2>&1
+OPID=$(grep -o '"pid": [0-9]*' "$OBASE/state.json" 2>/dev/null | grep -o '[0-9]*' | head -1)
+rm -f "$OBASE/state.json"
+BROWSIN_ORPHAN_GRACE_S=0 browsin gc >/dev/null 2>&1
+if [ -n "$OPID" ] && ! kill -0 "$OPID" 2>/dev/null; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "gc mata órfão de outro BROWSIN_DIR"
+else
+  FAIL=$((FAIL+1)); FAILED+=("gc mata órfão de outro BROWSIN_DIR"); printf '  FAIL %s\n' "gc mata órfão de outro BROWSIN_DIR"
+fi
+if [ -d "$OBASE" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "gc preserva arquivos do base alheio"
+else FAIL=$((FAIL+1)); FAILED+=("gc preserva arquivos do base alheio"); printf '  FAIL %s\n' "gc preserva arquivos do base alheio"; fi
+rm -rf "$OBASE"
+
 # O outro lado da história do state sumido: sem sweep due, o browser órfão é
 # adotado de volta — e a aba sobrevive.
 sess suite-adopt open $SP/basic.html >/dev/null 2>&1
@@ -306,6 +328,16 @@ rm -rf "$BROWSIN_DIR/flat"
 sess suite-a open $SP/basic.html >/dev/null 2>&1
 gc_cap() { BROWSIN_MAX_SESSIONS=1 browsin gc; }
 t "cap de sessões ceifa a mais antiga" 'acima do cap' gc_cap
+
+echo "— abas —"
+browsin open $SP/basic.html >/dev/null
+browsin js "void window.open('file://$SP/tall.html','browsin-suite-tab')" >/dev/null
+sleep 0.3
+t "tabs lista as abas"        'aba\(s\)'   browsin tabs
+t "tabs use fixa uma aba"     'usando 1'   browsin tabs use 1
+t "tabs auto descarta o pin"  'auto'       browsin tabs auto
+t "tabs close fecha uma aba"  'fechou 0'   browsin tabs close 0
+browsin open $SP/basic.html >/dev/null
 
 echo "— down --all —"
 sess suite-a open $SP/basic.html >/dev/null 2>&1

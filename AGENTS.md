@@ -27,7 +27,11 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   o adquire e o segura até o processo sair. Sem ele, dois comandos concorrentes a frio subiam dois
   browsers no mesmo perfil/porta (e o `down` deixava um órfão), e um comando lia a página do outro.
   `status`/`doctor`/`gc`/`down` nunca pegam o lock — inspecionar/resetar não pode esperar.
-- **Rode `test/suite.sh` (124 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
+- **Abas e o leak cross-base.** `tabs` (list/use/close/auto) fixa `state.targetId`, lido por
+  `pageTarget`; sem pin, segue a primeira aba. `gc` também varre bases irmãos `browsin*` (dirs
+  por-run do kit, testes) e mata browser órfão sem state — sem apagar arquivos alheios
+  (`BROWSIN_ORPHAN_GRACE_S` dá a carência, default 300s).
+- **Rode `test/suite.sh` (132 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
   buracos que já morderam: escala dobrada de `--dpr`, `confirm()` que trava a página, offset de
   coordenada dentro de iframe, download de blob, PDF paginado, e sessões concorrentes (isolamento,
   `gc`, órfão, cap, `down --all`).

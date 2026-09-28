@@ -350,7 +350,18 @@ export const cmdJs = async (args) => {
   const expr = args._.join(' ');
   if (!expr) throw new Error("usage: browsin js '<expression>'");
   const { cdp } = await connect();
-  const value = await cdp.eval(expr);
+  let value;
+  try {
+    value = await cdp.eval(expr);
+  } catch (err) {
+    // An expression that returns a Window, a DOM node or a circular object ran
+    // fine, but returnByValue cannot ship it over CDP. Report that instead of a
+    // protocol error the agent cannot act on — and do NOT re-evaluate (side
+    // effects like window.open must happen once).
+    if (/Object reference chain is too long|Could not be cloned|Return value|not serializable/i.test(err.message)) {
+      value = '(valor não serializável — a expressão rodou; retorne um primitivo ou use `void`)';
+    } else throw err;
+  }
   const logs = await drainLogs(cdp);
   await afterAction(cdp);
   cdp.close();
@@ -762,6 +773,50 @@ export const cmdDoctor = () => {
     lines.push(`  WARN  falling back to the user's own Chrome build. Run`);
     lines.push(`        scripts/install-browsers.sh (from the browsin checkout)`);
   }
+  return lines.join('\n');
+};
+
+/**
+ * Tabs, for the flows where one page is not enough: a `target=_blank` link, an
+ * OAuth popup, a docs tab opened in the background. `list` shows them, `use N`
+ * pins one for the next commands, `close N` drops one, `auto` unpins and goes
+ * back to following the first page. The pin lives in state.json as `targetId`
+ * and is read by `pageTarget`, so it survives between CLI invocations.
+ */
+export const cmdTabs = async (args) => {
+  const [sub = 'list', value] = args._;
+  const s = await browserStatus();
+  if (!s.up) return 'tabs  no browser running';
+  const list = await (await fetch(`http://127.0.0.1:${s.port}/json/list`)).json();
+  const pages = list.filter((t) => t.type === 'page' && !t.url.startsWith('devtools://'));
+  const pinned = readState().targetId;
+  const current = pinned && pages.some((p) => p.id === pinned) ? pinned : pages[0]?.id;
+
+  if (sub === 'auto') { writeState({ targetId: null }); return 'tabs  auto — segue a primeira aba'; }
+
+  if (sub !== 'list') {
+    const idx = Number(value);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= pages.length) {
+      throw new Error(`tabs ${sub}: índice fora de 0..${Math.max(0, pages.length - 1)} — veja \`browsin tabs\``);
+    }
+    const target = pages[idx];
+    if (sub === 'use') {
+      writeState({ targetId: target.id });
+      return `tabs  usando ${idx}: ${target.title || '(untitled)'} · ${target.url}\nnote  comandos seguintes ficam nesta aba; \`browsin tabs auto\` volta a seguir a primeira`;
+    }
+    if (sub === 'close') {
+      const res = await fetch(`http://127.0.0.1:${s.port}/json/close/${target.id}`).catch(() => null);
+      if (pinned === target.id) writeState({ targetId: null });
+      return `tabs  fechou ${idx}: ${target.title || '(untitled)'}${res ? '' : ' (sem confirmação do browser)'}`;
+    }
+    throw new Error('usage: browsin tabs [list] | tabs use <n> | tabs close <n> | tabs auto');
+  }
+
+  const lines = [`tabs  ${pages.length} aba(s)`];
+  pages.forEach((p, i) => {
+    lines.push(` ${String(i).padStart(2)}${p.id === current ? ' *' : '  '} ${p.title || '(untitled)'} · ${p.url}`);
+  });
+  if (pinned) lines.push('note  fixada com `tabs use`; `browsin tabs auto` volta a seguir a primeira');
   return lines.join('\n');
 };
 

@@ -199,6 +199,13 @@ outro. Agora cada sessão tem porta, perfil, `state.json` e `shots/` próprios:
 
 `browsin status` mostra a sua sessão (e lista as outras vivas); `browsin down` derruba só a sua.
 
+### Abas
+
+Uma sessão de browser pode ter várias abas — `target=_blank`, um popup de OAuth. Por default o
+próximo comando segue a aba mais recente; `browsin tabs` lista, `browsin tabs use N` fixa uma aba
+para os comandos seguintes, `browsin tabs close N` fecha e `browsin tabs auto` volta a seguir a
+primeira. O pin vive no `state.json`, então sobrevive entre invocações.
+
 Comandos da mesma sessão são **serializados** por um lock cross-process: disparar dois `browsin` em
 paralelo não sobe dois browsers nem faz um ler a página do outro — o segundo espera o primeiro
 sair. Sessões diferentes continuam paralelas de verdade. O lock é detectado como obsoleto se o dono
@@ -220,6 +227,12 @@ Dois buracos que o coletor cobre e que valem saber: browser que perdeu o `state.
 precisa ser coletada pelo `gc` de *outra* sessão (uma sessão nunca derruba o browser que está
 usando). Sem o `state.json`, a idade passa a ser o mtime do diretório — foi o que fez o `down`
 parar de deixar 200 MB invisíveis para sempre.
+
+O `gc` também varre os bases **irmãos** (`/tmp/browsin*`: os dirs por-run do kit, testes, runs
+manuais) e mata browser órfão sob eles, porque o coletor de um `BASE` só vê o próprio base — era
+assim que a máquina acumulava `chrome-headless-shell` de dias. Arquivos de base alheio não são
+apagados (o kit preserva `shots/` depois de dispor o browser); a carência para um browser recém
+subo é `BROWSIN_ORPHAN_GRACE_S` (default 300s).
 
 | variável | para quê |
 |---|---|

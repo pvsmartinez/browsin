@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { BASE, SESSION, TTL_MIN, MAX_SESSIONS } from './paths.mjs';
 
 /**
@@ -109,6 +109,57 @@ export const listSessions = () => {
 const STAMP = () => join(BASE, '.gc-stamp');
 const SWEEP_EVERY_MS = 5 * 60 * 1000;
 
+/**
+ * Browsers living under a *different* browsin base — the pi kit's per-run
+ * `browsin-run-*` dirs, a test dir, a manual run — are invisible to the
+ * per-BASE collector above. That is how a machine accumulates days-old
+ * `chrome-headless-shell` processes. When the ps sweep is due, also reap any
+ * main browser under a sibling `browsin*` base whose session no longer records
+ * it as a live pid.
+ *
+ * Foreign *files* are never deleted: the kit deliberately keeps a run's
+ * `shots/` after disposing its browser, so only the leaked process is killed.
+ * A grace period protects a browser that was just spawned before its
+ * `state.json` was written (env-overridable, for the tests).
+ */
+/** `ps -o etime` is `[[dd-]hh:]mm:ss` (macOS has no `etimes`). */
+const etimeSeconds = (s) => {
+  const [d, rest] = String(s).includes('-') ? String(s).split('-') : [0, s];
+  const hms = String(rest).trim().split(':').map(Number);
+  const [h, m, sec] = hms.length === 3 ? hms : hms.length === 2 ? [0, ...hms] : [0, 0, hms[0] || 0];
+  return ((Number(d) * 24 + h) * 60 + m) * 60 + sec;
+};
+
+const reapForeignOrphans = async (actions) => {
+  const prefix = join(dirname(BASE), 'browsin');
+  const ownDir = SESSION === 'default' ? BASE : join(BASE, SESSION);
+  const graceS = Number(process.env.BROWSIN_ORPHAN_GRACE_S ?? 300);
+  let ps;
+  try { ps = execFileSync('ps', ['-axo', 'pid=,etime=,args='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
+  catch { return; }
+  for (const line of ps.split('\n')) {
+    if (/--type=/.test(line)) continue; // renderer/GPU helper, not the browser
+    const m = /^\s*(\d+)\s+(\S+)\s+\S.*--user-data-dir=(\S+?)(?:\s|$)/.exec(line);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const ageS = etimeSeconds(m[2]);
+    const profile = m[3];
+    if (!profile.endsWith('/profile')) continue;
+    // Siblings are named `browsin`, `browsin-run-*`, `browsin-suite.*`…, so the
+    // match is a plain string prefix, not a path segment (`/tmp/browsin/` would
+    // miss every `browsin-*` dir).
+    if (!profile.startsWith(prefix)) continue;
+    if (profile.startsWith(`${BASE}/`)) continue; // our base: handled above
+    const sessionDir = dirname(profile);
+    if (sessionDir === ownDir) continue;
+    let owner = 0;
+    try { owner = Number(JSON.parse(readFileSync(join(sessionDir, 'state.json'), 'utf8')).pid); } catch { /* no state */ }
+    if (owner === pid && isAlive(pid)) continue; // live and accounted for
+    if (ageS < graceS) continue; // just spawned, state.json not written yet
+    if (await terminate(pid)) actions.push(`kill órfão pid ${pid} (base ${basename(sessionDir)}, sem state que o reconheça)`);
+  }
+};
+
 /** The ps sweep is the expensive part; run it at most every 5 min unless forced. */
 const sweepDue = () => {
   try {
@@ -191,6 +242,7 @@ export const gc = async ({ force = false, own = SESSION, ttlMin = TTL_MIN, maxSe
       if (name === own || sessions.some((s) => s.name === name)) continue;
       for (const pid of pids) if (await terminate(pid)) actions.push(`kill órfão pid ${pid} (sessão ${name}, sem diretório)`);
     }
+    await reapForeignOrphans(actions);
   }
   return actions;
 };

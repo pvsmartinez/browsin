@@ -139,11 +139,23 @@ export const launch = async ({ headed = false } = {}) => {
   throw new Error(`${bin.path} did not open a CDP port near ${home} — is it a Chromium binary?`);
 };
 
-/** Reuses the single page target so navigation state survives between calls. */
+/**
+ * Which page target a command drives. By default the first page in
+ * `/json/list` (newest-first in practice), so a link that opened a tab is where
+ * the next command lands. `tabs use N` pins a target id in state.json, which
+ * wins while it exists; a pin whose tab vanished falls back to auto and clears
+ * itself. `/json/new` only runs when the browser has no page at all.
+ */
 const pageTarget = async (port) => {
   const list = await (await fetch(endpoint(port, '/json/list'))).json();
-  const page = list.find((t) => t.type === 'page' && !t.url.startsWith('devtools://'));
-  if (page) return page;
+  const pages = list.filter((t) => t.type === 'page' && !t.url.startsWith('devtools://'));
+  const pinned = readState().targetId;
+  if (pinned) {
+    const hit = pages.find((t) => t.id === pinned);
+    if (hit) return hit;
+    writeState({ targetId: null }); // the pinned tab is gone
+  }
+  if (pages.length) return pages[0];
   const created = await (await fetch(endpoint(port, '/json/new?about=blank'), { method: 'PUT' })).json();
   return created;
 };

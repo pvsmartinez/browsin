@@ -62,6 +62,7 @@ browsin key <Enter|Tab|Escape|ArrowDown|…> [--mod cmd,shift] [--on SEL]
 browsin select <sel> <valor|rótulo> · upload <sel> <arquivo…> · download <sel>
 browsin drag <de> <para> | browsin drag <sel> --by dx,dy [--steps N]
 browsin scroll <y|top|bottom|seletor>
+browsin tabs [list] · tabs use N · tabs close N · tabs auto   # abas (popup, target=_blank)
 
 # gerir
 browsin viewport [1280x800|iphone|ipad|desktop|wide] [--dpr N] [--mobile]
@@ -174,6 +175,12 @@ gravação ativa.
 - **`logs` drena** — ler duas vezes não repete. `click`/`key`/`type` também drenam ao reportar.
 - **`--clip 'text=…'` pega o menor elemento com aquele texto**, quase sempre menor que a caixa que
   você queria. Para print, use seletor CSS do container (ou `--pad`).
+- **`--nth` vai fora do seletor**, mas se você colar a linha inteira do snapshot
+  (`'text=Entrar --nth 1'`) o browsin separa sozinho — é o mesmo que `--nth 1`.
+- **Abas:** `target=_blank`/pollup. Por default o próximo comando segue a aba mais recente; para
+  ficar numa aba específica use `browsin tabs` (lista) e `browsin tabs use N` (fixa);
+  `browsin tabs close N` fecha e `browsin tabs auto` volta a seguir a primeira. Sem fixar, um
+  popup inesperado (OAuth, anúncio) muda o contexto sem avisar.
 - **Shadow DOM: descendente não atravessa a fronteira.** Use o seletor de dentro do componente
   (`#shadowbtn`), não `my-widget button`.
 - **iframe cross-origin é invisível**; same-origin funciona, com offset de coordenada correto.
@@ -193,4 +200,4 @@ gravação ativa.
 - **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
   qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (124 casos).
+- **Antes de mexer no browsin**, rode `test/suite.sh` (132 casos).

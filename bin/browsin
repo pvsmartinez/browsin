@@ -54,7 +54,7 @@ const COMMANDS = {
   click: c.cmdClick, hover: c.cmdHover, type: c.cmdType, key: c.cmdKey, select: c.cmdSelect,
   upload: c.cmdUpload, download: c.cmdDownload, drag: c.cmdDrag, scroll: c.cmdScroll,
   viewport: c.cmdViewport, login: c.cmdLogin, status: c.cmdStatus, doctor: c.cmdDoctor,
-  record: c.cmdRecord, gc: c.cmdGc, down: c.cmdDown,
+  tabs: c.cmdTabs, record: c.cmdRecord, gc: c.cmdGc, down: c.cmdDown,
 };
 
 const ALIASES = { snaps: 'snapshot', ss: 'snapshot', shot: 'snap', screenshot: 'snap', pic: 'snap',
@@ -79,6 +79,7 @@ act        click <sel> · hover <sel> · type <sel> <text> [--enter]
            download <sel> [--dir path]          click and wait for the file
            drag <fromSel> <toSel> | drag <sel> --by dx,dy
            scroll <y|top|bottom|selector>
+           tabs [list] · tabs use N · tabs close N · tabs auto
 manage     viewport [1280x800|iphone|ipad|desktop|wide] [--dpr N] [--mobile]
            login [url] [--note "why"]     visible window to sign in by hand, once; --note shows an
                                   interstitial first, explaining to the user why the window opened
@@ -135,6 +136,24 @@ const VERSION_TOKENS = new Set(['--version', '-v']);
 const rawName = HELP_TOKENS.has(firstArg) || VERSION_TOKENS.has(firstArg) ? undefined : firstArg;
 const name = ALIASES[rawName] || rawName;
 const args = parse(rest);
+
+// An agent often pastes a whole snapshot line, so `--nth N` can arrive glued to
+// the selector: `click 'text=Entrar --nth 1'`. Peel it off into the flag the
+// commands already read, so the pasted line works instead of a confusing
+// "no match". Only on the selector-bearing positionals (never on `type` text).
+const peelNth = (v) => {
+  if (typeof v !== 'string') return null;
+  const m = /\s+--nth(?:=|\s+)(\d+)\s*$/.exec(v);
+  return m ? { value: v.slice(0, m.index), nth: Number(m[1]) } : null;
+};
+for (const key of ['clip', 'on']) {
+  const p = peelNth(args[key]);
+  if (p) { args[key] = p.value; if (args.nth === undefined) args.nth = p.nth; }
+}
+if (typeof args._[0] === 'string') {
+  const p = peelNth(args._[0]);
+  if (p) { args._[0] = p.value; if (args.nth === undefined) args.nth = p.nth; }
+}
 
 if (args.version || VERSION_TOKENS.has(firstArg)) {
   const { version } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
