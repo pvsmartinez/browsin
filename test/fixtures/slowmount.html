@@ -1,0 +1,12 @@
+<!doctype html><meta charset=utf-8><title>Aguardando</title>
+<style>body{margin:0;font:20px monospace}</style>
+<body>
+<script>
+  // Mounts after a beat, like an SPA: title and body text only exist after it.
+  // The default navigation wait should catch this; `--no-wait` should not.
+  setTimeout(() => {
+    document.title = 'Montou';
+    document.body.textContent = 'conteudo montado';
+  }, 500);
+</script>
+</body>

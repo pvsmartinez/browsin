@@ -17,7 +17,7 @@ if (major < 22 || typeof WebSocket === 'undefined') {
 const c = await import('../src/commands.mjs');
 const fs = await import('node:fs');
 
-const BOOLEAN = new Set(['full', 'mobile', 'all', 'no-snap', 'no-background', 'help', 'version', 'landscape',
+const BOOLEAN = new Set(['full', 'mobile', 'all', 'no-snap', 'no-wait', 'no-background', 'help', 'version', 'landscape',
   'jpeg', 'hard', 'fresh', 'net', 'failed', 'onscreen', 'append', 'enter', 'css-page-size', 'keep-frames']);
 
 const camel = (s) => s.replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
@@ -95,7 +95,7 @@ Flags: --wait '<expr>'  --timeout ms  --dpr N  --nth N  --clip SEL --pad px  --f
        --max-height px  --jpeg --quality N  --html N  --name NAME  -o path
        --format F --landscape --margin in --scale N --no-background --css-page-size
        --mod cmd,shift  --on SEL  --by dx,dy  --steps N  --limit N  --onscreen
-       --append  --enter  --net  --all  --no-snap  --hard  --fresh
+       --append  --enter  --net  --all  --no-snap  --no-wait  --hard  --fresh
        --fps N  --max-seconds N  --max-gap s  --keep-frames
 
 Never touches your real Chrome: headless shell, throwaway profile in /tmp/browsin.

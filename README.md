@@ -273,8 +273,10 @@ antes de mexer em qualquer coisa.
 
 ## Armadilhas
 
-- **Esperar é a parte difícil, não capturar.** Num SPA, sem `--wait` você fotografa o `#root`
-  vazio. `check` avisa (`body renders no text`), mas o conserto é o `--wait`.
+- **Esperar é a parte difícil, não capturar.** `open`/`check` já esperam (até 1,5s) o body deixar
+  de ser vazio, o que tira muitos SPAs do print em branco sem configuração. Para um marcador
+  próprio, `--wait '<expr>'` é sempre melhor; `--no-wait` desliga a espera automática (app
+  só-canvas). `check` avisa quando ainda ficou vazio (`body renders no text`).
 - **Perfil descartável = deslogado.** Todo app cai na tela de login. É a feature. Para portal
   logado, `browsin login <url>` abre uma janela visível uma vez; o cookie fica no perfil do
   browsin e todo comando headless depois herda. Com `--note "motivo"`, a janela abre primeiro

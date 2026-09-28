@@ -158,9 +158,11 @@ gravação ativa.
 
 ## Armadilhas
 
-- **Esperar é o problema difícil, não capturar.** Sem `--wait` num SPA você fotografa o `#root`
-  vazio. `check` avisa (`body renders no text — app may not have mounted`), mas o `--wait` é o
-  conserto.
+- **Esperar é o problema difícil, não capturar.** `open`/`check` já esperam, de forma limitada
+  (até 1,5s), o body deixar de ser vazio — o suficiente para muitos SPAs escaparem do print em
+  branco. Quando a app tem um marcador próprio, `--wait '<expr>'` é sempre melhor
+  (`--wait 'document.querySelector("#root")?.children.length > 0'`); `--no-wait` desliga a espera
+  automática (app só-canvas, página genuinamente vazia). `check` avisa quando ainda ficou vazio.
 - **Seletor não casou? O erro ensina.** `no match` vem com dica: zero match sugere endereçar
   pelo que o usuário lê (`click 'text=Entrar'`); múltiplos matches dizem quantos e apontam
   `--nth N` (0-based). Prefira `text=` a adivinhar classe gerada por framework.
@@ -206,4 +208,4 @@ gravação ativa.
 - **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
   qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (134 casos).
+- **Antes de mexer no browsin**, rode `test/suite.sh` (136 casos).

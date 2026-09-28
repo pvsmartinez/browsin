@@ -141,15 +141,38 @@ const renderNetwork = (events, { all = false } = {}) => {
     ...events.map((e) => `  [${e.status || e.error}] ${e.type} ${e.url || ''}`.trimEnd())];
 };
 
-const navigate = async (cdp, url, { waitExpr, timeout = 15000 } = {}) => {
+/**
+ * Best-effort mount wait: an SPA that paints after `load` would otherwise be
+ * photographed/examined blank. Cheap when the page already has content; bounded
+ * when it does not, so a canvas-only or genuinely empty page is not delayed for
+ * long. `--wait '<expr>'` overrides it, `--no-wait` disables it.
+ */
+const waitForMount = async (cdp, { timeout = 1500 } = {}) => {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const ready = await cdp.eval(`(() => {
+      const b = document.body;
+      if (b && b.innerText.trim().length) return true;
+      const root = document.querySelector('#root, #app, #__next, [data-reactroot]');
+      return !!(root && root.children.length);
+    })()`).catch(() => true); // an eval failure must never block
+    if (ready) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(100);
+  }
+};
+
+const navigate = async (cdp, url, { waitExpr, timeout = 15000, noWait = false } = {}) => {
   const notes = [];
   const loaded = cdp.once('Page.loadEventFired', { timeout }).catch(() => null);
   const nav = await cdp.send('Page.navigate', { url });
   if (nav.errorText) throw new Error(`${url} — ${nav.errorText}`);
   if ((await loaded) === null) notes.push('load event never fired (timeout)');
   await waitForExpression(cdp, 'document.readyState === "complete"', 3000);
-  if (waitExpr && !(await waitForExpression(cdp, waitExpr, timeout))) {
-    notes.push(`--wait never became true: ${waitExpr}`);
+  if (waitExpr) {
+    if (!(await waitForExpression(cdp, waitExpr, timeout))) notes.push(`--wait never became true: ${waitExpr}`);
+  } else if (!noWait && !(await waitForMount(cdp, { timeout: Math.min(timeout, 1500) }))) {
+    notes.push('body still empty after waiting for mount — pass --wait with an app-specific condition');
   }
   // Two frames of settle time: enough for a mounted framework to paint.
   await settle(cdp);
@@ -171,7 +194,7 @@ export const cmdOpen = async (args) => {
   if (!url) throw new Error('usage: browsin open <url|file>');
   const { cdp, viewport, dialogs } = await connect();
   const stopNet = await recordNetwork(cdp);
-  const notes = await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000) });
+  const notes = await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000), noWait: !!args['no-wait'] });
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
   const net = stopNet();
@@ -190,7 +213,7 @@ export const cmdCheck = async (args) => {
   if (!url) throw new Error('usage: browsin check <url|file>');
   const { cdp, viewport, dialogs } = await connect();
   const stopNet = await recordNetwork(cdp);
-  const notes = await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000) });
+  const notes = await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000), noWait: !!args['no-wait'] });
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
   const net = stopNet();
@@ -382,7 +405,7 @@ export const cmdNetwork = async (args) => {
   const url = args._[0] ? resolveTarget(args._[0]) : null;
   const { cdp } = await connect();
   const stopNet = await recordNetwork(cdp);
-  if (url) await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000) });
+  if (url) await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000), noWait: !!args['no-wait'] });
   else await cmdReloadInline(cdp, args);
   const net = stopNet();
   cdp.close();
@@ -457,7 +480,7 @@ export const cmdSnap = async (args) => {
 export const cmdPdf = async (args) => {
   const target = args._[0] ? resolveTarget(args._[0]) : null;
   const { cdp, dialogs } = await connect();
-  if (target) await navigate(cdp, target, { waitExpr: args.wait, timeout: Number(args.timeout || 20000) });
+  if (target) await navigate(cdp, target, { waitExpr: args.wait, timeout: Number(args.timeout || 20000), noWait: !!args['no-wait'] });
 
   const PAPER = {
     a4: [8.27, 11.69], a3: [11.69, 16.54], letter: [8.5, 11], legal: [8.5, 14], tabloid: [11, 17],

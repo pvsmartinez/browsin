@@ -42,6 +42,12 @@ t "js avalia"                                 'Teste browsin'        browsin js 
 t "js propaga erro da página"                 'browsin js:'          browsin js 'null.explode'
 t "alias eval é js"                           'Teste browsin'        browsin eval 'document.title'
 
+# SPA que só pinta depois do load: a espera de mount padrão pega; --no-wait não.
+echo "— espera de mount (SPA) —"
+t "open espera o mount por padrão" 'title Montou'      browsin open $SP/slowmount.html
+t "open --no-wait não espera"      'title Aguardando'  browsin open $SP/slowmount.html --no-wait
+browsin open $SP/basic.html >/dev/null
+
 echo "— entender a tela —"
 t "snapshot lista controles"      '\[button\]'                browsin snapshot
 t "snapshot desambigua"           'input\[type="text"\]|--nth' browsin snapshot
