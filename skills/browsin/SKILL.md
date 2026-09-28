@@ -193,4 +193,4 @@ gravação ativa.
 - **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
   qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (123 casos).
+- **Antes de mexer no browsin**, rode `test/suite.sh` (124 casos).

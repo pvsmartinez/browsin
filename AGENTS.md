@@ -27,7 +27,7 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   o adquire e o segura até o processo sair. Sem ele, dois comandos concorrentes a frio subiam dois
   browsers no mesmo perfil/porta (e o `down` deixava um órfão), e um comando lia a página do outro.
   `status`/`doctor`/`gc`/`down` nunca pegam o lock — inspecionar/resetar não pode esperar.
-- **Rode `test/suite.sh` (123 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
+- **Rode `test/suite.sh` (124 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
   buracos que já morderam: escala dobrada de `--dpr`, `confirm()` que trava a página, offset de
   coordenada dentro de iframe, download de blob, PDF paginado, e sessões concorrentes (isolamento,
   `gc`, órfão, cap, `down --all`).

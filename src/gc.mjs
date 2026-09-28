@@ -83,16 +83,23 @@ export const listSessions = () => {
     });
   };
 
-  if (existsSync(join(BASE, 'state.json')) || existsSync(join(BASE, 'profile'))) {
-    entry('default', BASE, ['profile', 'shots', 'downloads', 'record', 'state.json'].map((n) => join(BASE, n)));
+  // The flat default layout lives directly in BASE. Its own dirs (`profile/`,
+  // `shots/`…) are part of that session, not sibling sessions — without this,
+  // a BROWSIN_DIR that is itself a session directory (a caller pointing at the
+  // wrong level) would have its profile and shots reaped as stale sessions.
+  const flat = existsSync(join(BASE, 'state.json')) || existsSync(join(BASE, 'profile'));
+  const RESERVED = new Set(['profile', 'shots', 'downloads', 'record']);
+  if (flat) {
+    entry('default', BASE, [...RESERVED, 'state.json'].map((n) => join(BASE, n)));
   }
   let dirs = [];
   try {
     // Dot-dirs are browsin's own bookkeeping (the session lock and its stale
-    // graveyard), never a session — dropping them here keeps `gc`/`status` from
-    // inventing phantom sessions.
+    // graveyard), never a session. Reserved names are the flat layout's own
+    // dirs when that layout is present.
     dirs = readdirSync(BASE, { withFileTypes: true })
       .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+      .filter((d) => !(flat && RESERVED.has(d.name)))
       .map((d) => d.name);
   } catch { return out; }
   for (const name of dirs) entry(name, join(BASE, name), [join(BASE, name)]);

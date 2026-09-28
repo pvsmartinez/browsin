@@ -290,6 +290,19 @@ t "gc coleta a sessão default parada" 'default' reap_default
 if [ ! -d "$BROWSIN_DIR/profile" ] && [ ! -f "$BROWSIN_DIR/state.json" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "layout default coletado"
 else FAIL=$((FAIL+1)); FAILED+=("layout default coletado"); printf '  FAIL %s\n' "layout default coletado"; fi
 
+# BROWSIN_DIR apontando para um diretório de sessão (layout plano) não pode
+# tratar profile/ e shots/ como sessões velhas e ceifá-los: eles são da default.
+mkdir -p "$BROWSIN_DIR/flat/profile" "$BROWSIN_DIR/flat/shots"
+touch "$BROWSIN_DIR/flat/profile/Cookies"
+echo '{"pid": 999999, "port": 9500, "lastUsed": 1}' > "$BROWSIN_DIR/flat/state.json"
+BROWSIN_DIR="$BROWSIN_DIR/flat" browsin gc >/dev/null 2>&1
+if [ -f "$BROWSIN_DIR/flat/profile/Cookies" ] && [ -d "$BROWSIN_DIR/flat/shots" ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "layout default não ceifa profile/shots como sessões"
+else
+  FAIL=$((FAIL+1)); FAILED+=("layout default não ceifa profile/shots como sessões"); printf '  FAIL %s\n' "layout default não ceifa profile/shots como sessões"
+fi
+rm -rf "$BROWSIN_DIR/flat"
+
 sess suite-a open $SP/basic.html >/dev/null 2>&1
 gc_cap() { BROWSIN_MAX_SESSIONS=1 browsin gc; }
 t "cap de sessões ceifa a mais antiga" 'acima do cap' gc_cap
