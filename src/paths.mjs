@@ -1,5 +1,5 @@
 import { homedir, platform } from 'node:os';
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Everything browsin owns is disposable and lives outside the user's Chrome. */
@@ -68,7 +68,12 @@ export const readState = () => {
 export const writeState = (patch) => {
   ensureDirs();
   const next = { ...readState(), ...patch };
-  writeFileSync(STATE_FILE, JSON.stringify(next, null, 2));
+  // Atomic: a reader (or a racing writer that slipped past the session lock)
+  // must never see a half-written state.json, and a crash mid-write must not
+  // corrupt it. Write beside it, then rename — rename(2) is atomic.
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(next, null, 2));
+  renameSync(tmp, STATE_FILE);
   return next;
 };
 

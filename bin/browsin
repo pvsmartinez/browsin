@@ -99,7 +99,9 @@ Flags: --wait '<expr>'  --timeout ms  --dpr N  --nth N  --clip SEL --pad px  --f
 
 Never touches your real Chrome: headless shell, throwaway profile in /tmp/browsin.
 One browser per session (BROWSIN_SESSION, else PI_SESSION_ID, else "default"); sessions
-idle past BROWSIN_TTL_MIN (default 60) are reaped automatically — see browsin gc.`;
+idle past BROWSIN_TTL_MIN (default 60) are reaped automatically — see browsin gc.
+Commands in the same session are serialized: a parallel browsin waits its turn instead of
+spawning a second browser or reading the page the first one navigated.`;
 
 // Levenshtein over the command + alias list, so a typo gets a nudge instead of
 // a wall of usage text. Suggests only when close (<= 2 edits).

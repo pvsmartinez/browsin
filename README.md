@@ -199,6 +199,11 @@ outro. Agora cada sessão tem porta, perfil, `state.json` e `shots/` próprios:
 
 `browsin status` mostra a sua sessão (e lista as outras vivas); `browsin down` derruba só a sua.
 
+Comandos da mesma sessão são **serializados** por um lock cross-process: disparar dois `browsin` em
+paralelo não sobe dois browsers nem faz um ler a página do outro — o segundo espera o primeiro
+sair. Sessões diferentes continuam paralelas de verdade. O lock é detectado como obsoleto se o dono
+morre (sem travar a sessão para sempre), e `status`/`doctor`/`gc`/`down` nunca o pegam.
+
 A sessão `default` (sem `BROWSIN_SESSION`/`PI_SESSION_ID`) fica no layout plano, com `profile/` e
 `state.json` direto em `BROWSIN_DIR` — é o que um chamador que já isola por conta própria (o kit do
 pi, um teste, um run de rascunho) sempre teve. Sessões nomeadas ganham subdiretório.
@@ -248,7 +253,8 @@ test/suite.sh     # suíte de aceitação, incluindo os casos que só quebram em
 
 A bateria cobre console/rede/recurso, snapshot, os quatro modos de `snap`, PDF paginado, diálogo
 `confirm()`, select, upload, download de blob, drag em canvas, shadow DOM, iframe, sessões
-concorrentes e coleta, e todos os caminhos de erro. É **hermética**: roda num `BROWSIN_DIR`
+concorrentes (incluindo cold start paralelo), o lock de sessão e a coleta, e todos os caminhos de
+erro. É **hermética**: roda num `BROWSIN_DIR`
 temporário, então `down --all` e `gc` não tocam no browser que outro agente esteja usando. Rode
 antes de mexer em qualquer coisa.
 

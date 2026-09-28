@@ -216,6 +216,22 @@ PB=$(sess suite-b status | grep -oE 'port [0-9]+')
 if [ -n "$PA" ] && [ "$PA" != "$PB" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "portas distintas ($PA vs $PB)"
 else FAIL=$((FAIL+1)); FAILED+=("portas distintas por sessão"); printf '  FAIL portas distintas: %s vs %s\n' "$PA" "$PB"; fi
 
+# Cold start concorrente: sem o lock da sessão, os dois processos veem a porta
+# livre e sobem DOIS browsers no mesmo perfil (um vira órfão que `down` não
+# mata), e o segundo comando lê a página que o primeiro abriu. Com o lock, eles
+# serializam: um browser só, e cada um lê a sua própria página.
+CDIR="$(mktemp -d /tmp/browsin-conc.XXXXXX)"
+( BROWSIN_DIR="$CDIR" browsin open $SP/basic.html > "$CDIR/a.out" 2>&1 ) &
+( BROWSIN_DIR="$CDIR" browsin open $SP/tall.html  > "$CDIR/b.out" 2>&1 ) &
+wait
+NMAIN=$(ps -axo command= | grep -- "--user-data-dir=$CDIR/profile" | grep -v -- '--type=' | grep -c 'chrome-headless-shell' || true)
+if [ "$NMAIN" -eq 1 ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "launch concorrente sobe um browser só"
+else FAIL=$((FAIL+1)); FAILED+=("launch concorrente sobe um browser só"); printf '  FAIL %s\n       esperava 1 browser, achei %s\n' "launch concorrente sobe um browser só" "$NMAIN"; fi
+if grep -q 'basic.html' "$CDIR/a.out" && grep -q 'tall.html' "$CDIR/b.out"; then PASS=$((PASS+1)); printf '  ok   %s\n' "comandos concorrentes leem cada um a sua página"
+else FAIL=$((FAIL+1)); FAILED+=("comandos concorrentes leem cada um a sua página"); printf '  FAIL %s\n       a=%s b=%s\n' "comandos concorrentes leem cada um a sua página" "$(head -1 "$CDIR/a.out")" "$(head -1 "$CDIR/b.out")"; fi
+BROWSIN_DIR="$CDIR" browsin down >/dev/null 2>&1
+rm -rf "$CDIR"
+
 sess suite-a down >/dev/null 2>&1
 t "down da A não derruba a B"     'up '               sess suite-b status
 

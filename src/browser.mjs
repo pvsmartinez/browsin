@@ -5,9 +5,25 @@ import { COLLECTOR } from './collector.mjs';
 import { QUERY } from './query.mjs';
 import { ensureDirs, findBinary, readState, writeState, PORT, PROFILE, STATE_FILE, SESSION } from './paths.mjs';
 import { gc, isAlive, listSessions } from './gc.mjs';
+import { acquireSessionLock } from './lock.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const endpoint = (port, path) => `http://127.0.0.1:${port}${path}`;
+
+/**
+ * One browser per session means two commands must not drive it at once: in a
+ * cold start both would spawn a browser (the "two browsers" bug), and even warm
+ * they would interleave navigation and screenshots. Every browser command takes
+ * this lock on its first `launch` and holds it until the process exits, so a
+ * parallel invocation queues. Reentrant within the process — `check` opens two
+ * connections, `connect` is called by every command.
+ */
+let lockRelease = null;
+const ensureSessionLock = async () => {
+  if (lockRelease) return;
+  lockRelease = await acquireSessionLock();
+  process.once('exit', () => { try { lockRelease?.(); } catch { /* exiting */ } });
+};
 
 const probe = async (port) => {
   try {
@@ -54,6 +70,7 @@ const isOurs = (pid) => {
  * memory matters.
  */
 export const launch = async ({ headed = false } = {}) => {
+  await ensureSessionLock();
   await gc();
 
   const state = readState();

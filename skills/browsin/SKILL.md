@@ -186,7 +186,11 @@ gravação ativa.
   Code, shell — a sessão vem da aba do terminal (`TERM_SESSION_ID`); para separar dois fluxos na
   mesma aba, `BROWSIN_SESSION=nome`. `browsin status` mostra a sua e as outras vivas; `browsin gc`
   mostra e força a coleta.
+- **Comandos da mesma sessão são serializados.** Um lock por sessão impede que dois `browsin`
+  paralelos subam dois browsers ou leiam a página um do outro — não conte com paralelismo *dentro*
+  de uma sessão; o segundo comando espera o primeiro sair. Sessões diferentes rodam em paralelo de
+  verdade.
 - **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
   qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
 - **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (121 casos).
+- **Antes de mexer no browsin**, rode `test/suite.sh` (123 casos).

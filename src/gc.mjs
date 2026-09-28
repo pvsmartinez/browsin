@@ -88,7 +88,12 @@ export const listSessions = () => {
   }
   let dirs = [];
   try {
-    dirs = readdirSync(BASE, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    // Dot-dirs are browsin's own bookkeeping (the session lock and its stale
+    // graveyard), never a session — dropping them here keeps `gc`/`status` from
+    // inventing phantom sessions.
+    dirs = readdirSync(BASE, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+      .map((d) => d.name);
   } catch { return out; }
   for (const name of dirs) entry(name, join(BASE, name), [join(BASE, name)]);
   return out;
