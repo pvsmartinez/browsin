@@ -194,7 +194,8 @@ outro. Agora cada sessão tem porta, perfil, `state.json` e `shots/` próprios:
 |---|---|
 | `BROWSIN_SESSION` | explícito, quando o chamador sabe o que está fazendo |
 | `PI_SESSION_ID` | automático dentro do pi — **cada run de subagente tem o seu**, então subagentes paralelos não colidem |
-| `TERM_SESSION_ID` | fora do pi (codex, Claude Code, shells): isola por aba de terminal |
+| `CLAUDE_CODE_SESSION_ID` | automático no Claude Code: cada conversa tem a sua — o `login` de uma não vaza para a próxima na mesma aba |
+| `TERM_SESSION_ID` | fora do pi e do Claude Code (codex, shells): isola por aba de terminal |
 | `default` | sem nenhuma das anteriores — ou com `BROWSIN_DIR` explícito, que é namespace do próprio chamador |
 
 `browsin status` mostra a sua sessão (e lista as outras vivas); `browsin down` derruba só a sua.
@@ -236,7 +237,7 @@ subo é `BROWSIN_ORPHAN_GRACE_S` (default 300s).
 
 | variável | para quê |
 |---|---|
-| `BROWSIN_SESSION` | namespace da sessão (default: `PI_SESSION_ID`, senão `TERM_SESSION_ID`, senão `default`) |
+| `BROWSIN_SESSION` | namespace da sessão (default: `PI_SESSION_ID`, senão `CLAUDE_CODE_SESSION_ID`, senão `TERM_SESSION_ID`, senão `default`) |
 | `BROWSIN_DIR` | raiz (default `/tmp/browsin`); sessões nomeadas viram subdiretório, a `default` fica na raiz |
 | `BROWSIN_PORT` | porta fixa (default: 9377 + hash da sessão) |
 | `BROWSIN_TTL_MIN` · `BROWSIN_MAX_SESSIONS` | coleta: ociosidade e teto de sessões vivas |
@@ -289,7 +290,11 @@ antes de mexer em qualquer coisa.
   ```
 
   O primeiro comando comum depois do `login` fecha a janela visível e relança headless no mesmo
-  perfil; a página volta a `about:blank` (o cookie, não a navegação, é o que persiste).
+  perfil; a página volta a `about:blank` (o cookie, não a navegação, é o que persiste). O login
+  é da sessão: outras não o veem, e `down --fresh` ou o TTL de ociosidade o apagam. Ambos os
+  builds rodam com `--use-mock-keychain` — sem isso o chromium headed cifra o cookie com a chave
+  do Keychain e o headless shell não decifra, e o login some no relançamento. A janela é ativada
+  por pid (`NSRunningApplication`), porque um processo destacado nasce atrás de tudo.
 - **`viewport --dpr` ≠ `snap --dpr`.** O primeiro é o `devicePixelRatio` que a *página* vê (media
   query, `srcset`); o segundo é a densidade do arquivo. O CDP multiplica os dois, então o `snap`
   divide de volta — pedir 1x num viewport @2x não pode render imagem 4x.

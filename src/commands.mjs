@@ -1,6 +1,6 @@
 import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
-import { connect, launch, shutdown, shutdownAll, status as browserStatus } from './browser.mjs';
+import { bringToFront, connect, launch, shutdown, shutdownAll, status as browserStatus } from './browser.mjs';
 import { SNAPSHOT } from './query.mjs';
 import { buildLoginNoteHtml } from './login-note.mjs';
 import { gc, listSessions } from './gc.mjs';
@@ -963,11 +963,15 @@ export const cmdLogin = async (args) => {
     ? `data:text/html;charset=utf-8,${encodeURIComponent(buildLoginNoteHtml(note, url))}`
     : url;
   if (start) await navigate(cdp, start, { timeout: Number(args.timeout || 30000) }).catch(() => {});
+  await cdp.send('Page.bringToFront').catch(() => {});
+  const shown = bringToFront(readState().pid);
   const head = await pageHead(cdp);
   await afterAction(cdp);
   cdp.close();
+  const where = head.url.startsWith('data:') ? `interstitial → ${url || '(no url)'}` : head.url;
   return [
-    `login window open (headed chromium) — ${head.url}`,
+    `login window open (headed chromium) — ${where}`,
+    ...(shown || process.platform !== 'darwin' ? [] : ['warn  could not bring the window to front — tell the user to look for "Google Chrome for Testing" in the Dock']),
     ...(note ? [`note  interstitial shown first: "${note}" — the user reads the why before the site loads`] : []),
     'The USER signs in by hand in that visible window. Never type credentials via headless',
     'commands, never ask for them in chat — just tell the user why the window is open and',
@@ -975,6 +979,7 @@ export const cmdLogin = async (args) => {
     'Closing the window does NOT log out: cookies live on disk in browsin\'s profile, not in',
     'the window. Your next headless command relaunches on the same profile, already',
     'authenticated — the task continues exactly where it stopped.',
-    'Cookies survive until `browsin down --fresh` (plain `down`, `gc` and idle TTL keep them).',
+    'The login belongs to THIS session only (its own profile): other sessions never see it,',
+    'and `down --fresh` or the session idling past the TTL (gc) wipes it.',
   ].join('\n');
 };

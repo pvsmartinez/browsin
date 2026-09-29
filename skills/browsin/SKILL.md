@@ -142,8 +142,11 @@ funcionar, e é o que os agentes costumam desconfiar sem razão:
    browsin check https://app.exemplo.com/painel
    ```
 
-Os cookies ficam no perfil do browsin até `down --fresh`; `down` comum, `gc` e o TTL de sessão
-ociosa não os tocam. Se `doctor` mostrar `login unavailable`, a instalação foi `--shell-only`
+O login vale **só para a sua sessão** (o perfil dela): outras sessões não o veem, `down` comum
+o mantém, e `down --fresh` ou a sessão ociosa além do TTL (`gc`) o apagam. No Claude Code a
+sessão é a conversa (`CLAUDE_CODE_SESSION_ID`), não a aba do terminal. A janela é trazida para a
+frente sozinha; se o macOS não deixar, a saída avisa (`warn`) — diga ao usuário para procurar
+"Google Chrome for Testing" no Dock. Se `doctor` mostrar `login unavailable`, a instalação foi `--shell-only`
 (sem camada de UI) — rode `scripts/install-browsers.sh` para ter o chromium headed.
 
 ## Gravação e orçamento de contexto
@@ -197,8 +200,9 @@ gravação ativa.
   de uma hora é ceifada sozinha. `down` também cancela a gravação ativa; rode `record stop` antes
   dele se quiser preservar o GIF/MP4.
 - **Uma sessão, um browser.** Dentro do pi cada sessão e cada run de subagente ganha a sua
-  (`PI_SESSION_ID`), então agentes paralelos não brigam pela mesma aba. Fora do pi — codex, Claude
-  Code, shell — a sessão vem da aba do terminal (`TERM_SESSION_ID`); para separar dois fluxos na
+  (`PI_SESSION_ID`), então agentes paralelos não brigam pela mesma aba. No Claude Code, cada
+  conversa (`CLAUDE_CODE_SESSION_ID`). Fora disso — codex, shell — a sessão vem da aba do terminal
+  (`TERM_SESSION_ID`); para separar dois fluxos na
   mesma aba, `BROWSIN_SESSION=nome`. `browsin status` mostra a sua e as outras vivas; `browsin gc`
   mostra e força a coleta.
 - **Comandos da mesma sessão são serializados.** Um lock por sessão impede que dois `browsin`

@@ -114,6 +114,10 @@ export const launch = async ({ headed = false } = {}) => {
       `--user-data-dir=${PROFILE}`,
       '--no-first-run',
       '--no-default-browser-check',
+      // Headed Chromium encrypts cookies with a Keychain key the headless shell
+      // cannot read: without this, a `login` is silently lost on the headless
+      // relaunch. The mock key is shared by both builds (and skips the prompt).
+      '--use-mock-keychain',
       '--disable-gpu',
       '--hide-scrollbars',
       '--mute-audio',
@@ -183,12 +187,16 @@ export const connect = async ({ headed = false } = {}) => {
 
   const state = readState();
   const vp = state.viewport || { width: 1280, height: 800, dpr: 1 };
-  await cdp.send('Emulation.setDeviceMetricsOverride', {
-    width: vp.width,
-    height: vp.height,
-    deviceScaleFactor: vp.dpr,
-    mobile: !!vp.mobile,
-  });
+  // A real window sizes itself; forcing the headless viewport on it clips the
+  // login page the user has to fill in.
+  if (!headed) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: vp.width,
+      height: vp.height,
+      deviceScaleFactor: vp.dpr,
+      mobile: !!vp.mobile,
+    });
+  }
 
   // Replace the previous registration instead of stacking one per invocation.
   for (const id of state.injectedIds || []) {
@@ -215,6 +223,22 @@ export const connect = async ({ headed = false } = {}) => {
   });
 
   return { cdp, target, viewport: vp, dialogs };
+};
+
+/**
+ * A browser spawned detached from a background process opens its window
+ * behind everything (often off the current Space) — the user never sees the
+ * login screen. Activate the app by pid: NSRunningApplication needs no
+ * Accessibility permission, unlike System Events.
+ */
+export const bringToFront = (pid) => {
+  if (process.platform !== 'darwin' || !pid) return false;
+  const js = `ObjC.import('AppKit');
+    const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${Number(pid)});
+    a.isNil() ? 'no' : (a.activateWithOptions($.NSApplicationActivateAllWindows | $.NSApplicationActivateIgnoringOtherApps), 'ok')`;
+  try {
+    return execFileSync('osascript', ['-l', 'JavaScript', '-e', js], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).trim() === 'ok';
+  } catch { return false; }
 };
 
 export const shutdown = async () => {

@@ -20,7 +20,7 @@ PASS=0; FAIL=0; FAILED=()
 # PI_SESSION_ID is cleared so "default" is deterministic; session cases set it
 # back per command.
 export BROWSIN_DIR="$(mktemp -d /tmp/browsin-suite.XXXXXX)"
-unset PI_SESSION_ID BROWSIN_SESSION
+unset PI_SESSION_ID CLAUDE_CODE_SESSION_ID BROWSIN_SESSION
 trap 'browsin down --all >/dev/null 2>&1; rm -rf "$BROWSIN_DIR"' EXIT
 
 t() { # t <nome> <regex esperado> <comando...>
@@ -230,6 +230,11 @@ t "aba da B é a da B"             'Página alta'        sess suite-b js 'docume
 t "status lista as outras vivas"  'também vivas'       sess suite-a status
 t "PI_SESSION_ID vira sessão"     'sess  pi-auto-42'   pi_sess pi-auto-42 status
 t "TERM_SESSION_ID vira sessão"   'sess  term-tab-77'  env -u PI_SESSION_ID TERM_SESSION_ID=term-tab-77 BROWSIN_DIR= browsin status
+t "CLAUDE_CODE_SESSION_ID vence a aba" 'sess  cc-conv-9' env -u PI_SESSION_ID CLAUDE_CODE_SESSION_ID=cc-conv-9 TERM_SESSION_ID=term-tab-77 BROWSIN_DIR= browsin status
+# Sem mock keychain o chromium headed cifra o cookie com a chave do Keychain e o
+# headless shell não decifra: o login some no relançamento headless.
+APID=$(sess suite-a status | grep -oE 'pid [0-9]+' | grep -oE '[0-9]+')
+t "browser sobe com --use-mock-keychain" 'use-mock-keychain' ps -p "$APID" -o args=
 
 # Depois do `login` (estado headed), um comando comum relança headless no mesmo
 # perfil — a janela visível não é dirigida por baixo.
