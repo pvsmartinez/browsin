@@ -14,8 +14,10 @@ the flat layout.)
 If `browsin` is not on PATH, install it with `scripts/setup.sh` in a checkout of
 [browsin](https://gitlab.com/super-company-git/game-tools/browsin). `browsin doctor` shows what is in use.
 
-**It never touches the user's Chrome.** The headless shell has no UI layer: it does not appear on
-their screen, does not see their cookies, does not open a window. That is why the tool exists.
+**It never uses the user's Chrome profile.** By default it runs the headless shell, which has no UI
+layer: it does not appear on their screen, does not see their cookies, does not open a window. When
+the Chrome for Testing builds are missing it falls back to an installed Google Chrome or Chromium,
+still on its own profile, and `browsin doctor` warns about it. That isolation is why the tool exists.
 
 ## Start with text, not pixels
 
@@ -146,8 +148,10 @@ The login holds **only for your session** (its profile): other sessions do not s
 keeps it, and `down --fresh` or the session idling past its TTL (`gc`) erases it. In Claude Code the
 session is the conversation (`CLAUDE_CODE_SESSION_ID`), not the terminal tab. The window is brought to
 the front on its own; when macOS does not allow it, the output warns (`warn`) — tell the user to look
-for "Google Chrome for Testing" in the Dock. When `doctor` shows `login unavailable`, the install was
-`--shell-only` (no UI layer) — run `scripts/install-browsers.sh` to get the headed Chromium.
+for "Google Chrome for Testing" in the Dock. When `doctor` shows `login unavailable`, no windowed browser was
+found (a `--shell-only` install and no Chrome on the machine) — run `scripts/install-browsers.sh` to
+get the headed Chromium. When `login` shows an installed Chrome, it falls back to it, still on
+browsin's profile.
 
 ## Recording and the context budget
 

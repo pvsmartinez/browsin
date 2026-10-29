@@ -98,7 +98,8 @@ Flags: --wait '<expr>'  --timeout ms  --dpr N  --nth N  --clip SEL --pad px  --f
        --append  --enter  --net  --all  --no-snap  --no-wait  --hard  --fresh
        --fps N  --max-seconds N  --max-gap s  --keep-frames
 
-Never touches your real Chrome: headless shell, throwaway profile in /tmp/browsin.
+Never uses your Chrome profile: a throwaway profile in /tmp/browsin, on the headless shell
+(an installed Chrome only as a fallback, which doctor flags).
 One browser per session (BROWSIN_SESSION, else PI_SESSION_ID, else "default"); sessions
 idle past BROWSIN_TTL_MIN (default 60) are reaped automatically — see browsin gc. A detached
 janitor per base (spawned by launch, BROWSIN_JANITOR=off to disable) keeps reaping even if
