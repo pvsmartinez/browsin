@@ -199,6 +199,12 @@ gravação ativa.
   paralelo, `down` mata só a *sua* sessão; `down --all --fresh` limpa tudo. Sessão ociosa por mais
   de uma hora é ceifada sozinha. `down` também cancela a gravação ativa; rode `record stop` antes
   dele se quiser preservar o GIF/MP4.
+- **Se o harness morrer, o janitor cobre.** Cada `launch` cria um processo destacado por base
+  (`BROWSIN_DIR`) que repete o gc no timer (≤ 10 min) e sai quando nenhuma sessão tem browser vivo
+  — é a rede de segurança para browser esquecido quando o run/agente que o lançou desaparece.
+  `BROWSIN_JANITOR=off` desliga; nada é instalado na máquina, e ele não toca em browser de outro
+  usuário nem em sessão com comando em andamento (lock revalidado no ponto de matar; todo `kill`
+  exige que o pid prove no `ps` ser o browser do perfil da sessão — pid reutilizado não é morto).
 - **Uma sessão, um browser.** Dentro do pi cada sessão e cada run de subagente ganha a sua
   (`PI_SESSION_ID`), então agentes paralelos não brigam pela mesma aba. No Claude Code, cada
   conversa (`CLAUDE_CODE_SESSION_ID`). Fora disso — codex, shell — a sessão vem da aba do terminal

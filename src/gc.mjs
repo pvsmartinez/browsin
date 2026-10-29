@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { BASE, SESSION, TTL_MIN, MAX_SESSIONS } from './paths.mjs';
+import { tryAcquireAt } from './lock.mjs';
 
 /**
  * Garbage collection for session browsers. There is no daemon — every CLI
@@ -24,7 +25,8 @@ import { BASE, SESSION, TTL_MIN, MAX_SESSIONS } from './paths.mjs';
 
 export const isAlive = (pid) => {
   if (!pid) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); return true; }
+  catch (err) { return err?.code === 'EPERM'; } // EPERM: exists, owned by another user
 };
 
 const readJson = (file) => {
@@ -32,6 +34,58 @@ const readJson = (file) => {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The ps sweep lists every user's processes on a shared machine; kill by pid
+// would be attempted on another user's browser if one ever pointed at a browsin
+// profile (EPERM — but only after confusing actions). Never look at them.
+const MY_UID = typeof process.getuid === 'function' ? process.getuid() : null;
+const otherUsersProcess = (line) => {
+  if (MY_UID === null) return false;
+  const m = /^\s*\d+\s+(\d+)\s/.exec(line);
+  return !!m && Number(m[1]) !== MY_UID;
+};
+
+const escPath = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** ps must never hang the collector; bounded, and a failure is never fatal. */
+const PS_TIMEOUT_MS = 5000;
+const readPs = () => {
+  try {
+    return execFileSync('ps', ['-axo', 'pid=,uid=,args='], { encoding: 'utf8', timeout: PS_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { return null; }
+};
+
+/** pid -> {uid, args}. null when ps is unavailable: "cannot verify" must be
+ *  read as "cannot kill", never as "trust the pid in state.json". */
+const psTable = () => {
+  const out = readPs();
+  if (out === null) return null;
+  const map = new Map();
+  for (const line of out.split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    if (m) map.set(Number(m[1]), { uid: Number(m[2]), args: m[3] });
+  }
+  return map;
+};
+
+/** The profile dir a session's browser is launched with (flat layout included). */
+export const sessionProfile = (s) => join(s.dir, 'profile');
+
+/**
+ * True only when pid is this user's *main* browser process (helpers carry
+ * `--type=`) running exactly this profile dir. Everything else — a reused pid
+ * now belonging to an unrelated process, a foreign user's process, ps
+ * unavailable — is false, and false means "never kill".
+ */
+export const runsProfile = (pid, profileDir) => {
+  const table = psTable();
+  if (!table) return false;
+  const e = table.get(Number(pid));
+  if (!e) return false;
+  if (MY_UID !== null && e.uid !== MY_UID) return false;
+  if (/--type=/.test(e.args)) return false;
+  return new RegExp(`(^|\\s)--user-data-dir=${escPath(profileDir)}(\\s|$)`).test(e.args);
+};
 
 /**
  * SIGTERM, wait for it to actually die, then SIGKILL. The wait matters: Chrome
@@ -135,11 +189,12 @@ const reapForeignOrphans = async (actions) => {
   const ownDir = SESSION === 'default' ? BASE : join(BASE, SESSION);
   const graceS = Number(process.env.BROWSIN_ORPHAN_GRACE_S ?? 300);
   let ps;
-  try { ps = execFileSync('ps', ['-axo', 'pid=,etime=,args='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
+  try { ps = execFileSync('ps', ['-axo', 'pid=,uid=,etime=,args='], { encoding: 'utf8', timeout: PS_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] }); }
   catch { return; }
   for (const line of ps.split('\n')) {
     if (/--type=/.test(line)) continue; // renderer/GPU helper, not the browser
-    const m = /^\s*(\d+)\s+(\S+)\s+\S.*--user-data-dir=(\S+?)(?:\s|$)/.exec(line);
+    if (otherUsersProcess(line)) continue; // another user's browser: never ours
+    const m = /^\s*(\d+)\s+\d+\s+(\S+)\s+\S.*--user-data-dir=(\S+?)(?:\s|$)/.exec(line);
     if (!m) continue;
     const pid = Number(m[1]);
     const ageS = etimeSeconds(m[2]);
@@ -156,7 +211,14 @@ const reapForeignOrphans = async (actions) => {
     try { owner = Number(JSON.parse(readFileSync(join(sessionDir, 'state.json'), 'utf8')).pid); } catch { /* no state */ }
     if (owner === pid && isAlive(pid)) continue; // live and accounted for
     if (ageS < graceS) continue; // just spawned, state.json not written yet
-    if (await terminate(pid)) actions.push(`kill órfão pid ${pid} (base ${basename(sessionDir)}, sem state que o reconheça)`);
+    // Same rules as every kill point: a command holding this session's lock
+    // (mid-launch, state.json not written yet) must not see its browser die,
+    // and the pid must prove it is the browser of this exact profile.
+    const release = existsSync(sessionDir) ? tryAcquireAt(sessionDir) : null;
+    if (existsSync(sessionDir) && !release) continue;
+    try {
+      if (await terminateBrowser(pid, profile)) actions.push(`kill órfão pid ${pid} (base ${basename(sessionDir)}, sem state que o reconheça)`);
+    } finally { release?.(); }
   }
 };
 
@@ -175,18 +237,18 @@ const sweepDue = () => {
  * counts. Both layouts are recognised: `<BASE>/profile` is the default session,
  * `<BASE>/<sessão>/profile` a named one.
  */
-const browsersOnDisk = () => {
+export const browsersOnDisk = () => {
   const byName = new Map();
-  let ps;
-  try { ps = execFileSync('ps', ['-axo', 'pid=,args='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
-  catch { return { byName, ok: false }; }
+  const ps = readPs();
+  if (ps === null) return { byName, ok: false };
   const esc = BASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const named = new RegExp(`^\\s*(\\d+)\\s+\\S.*--user-data-dir=${esc}/([^/ ]+)/profile(?:\\s|$)`);
-  const flat = new RegExp(`^\\s*(\\d+)\\s+\\S.*--user-data-dir=${esc}/profile(?:\\s|$)`);
+  const named = new RegExp(`^\\s*(\\d+)\\s+\\d+\\s+\\S.*--user-data-dir=${esc}/([^/ ]+)/profile(?:\\s|$)`);
+  const flat = new RegExp(`^\\s*(\\d+)\\s+\\d+\\s+\\S.*--user-data-dir=${esc}/profile(?:\\s|$)`);
   for (const line of ps.split('\n')) {
     // Renderer/GPU helpers inherit --user-data-dir too; killing one would crash
     // the page of a perfectly live browser. Only the main process counts.
     if (/--type=/.test(line)) continue;
+    if (otherUsersProcess(line)) continue; // another user's browser: never ours
     const m = named.exec(line);
     if (m) { byName.set(m[2], [...(byName.get(m[2]) || []), Number(m[1])]); continue; }
     const f = flat.exec(line);
@@ -196,51 +258,101 @@ const browsersOnDisk = () => {
 };
 
 /**
+ * Kill point with identity verification: a state pid can have been reused by
+ * an unrelated process since it was written, so before any signal the pid must
+ * prove it is this session's own browser. An already-dead pid needs no proof.
+ * Returns false when the kill was skipped (unverified) — the caller keeps the
+ * session for the next run instead of killing blind.
+ */
+const terminateBrowser = async (pid, profileDir) => {
+  if (!isAlive(pid)) return true;
+  if (!runsProfile(pid, profileDir)) return false;
+  await terminate(pid);
+  return true;
+};
+
+/**
  * Reaps dead, idle and excess sessions. `own` is never touched — a session must
  * not collect the browser it is about to drive. Returns what it did.
  */
-export const gc = async ({ force = false, own = SESSION, ttlMin = TTL_MIN, maxSessions = MAX_SESSIONS } = {}) => {
+export const gc = async ({ force = false, own = SESSION, ttlMin = TTL_MIN, maxSessions = MAX_SESSIONS, protect = [], selfSlot = true } = {}) => {
   const actions = [];
   const sessions = listSessions();
   const due = force || sweepDue();
-  const stale = sessions.filter((s) => s.name !== own && s.idleMin > ttlMin);
+  // `protect` extends the single-`own` exemption to sessions a live command is
+  // driving (the janitor passes every session whose lock is held) — a session
+  // mid-command must never be judged idle by a collector.
+  const exempt = (s) => s.name === own || protect.includes(s.name);
+  const stale = sessions.filter((s) => !exempt(s) && s.idleMin > ttlMin);
   // A stale session whose browser is still up needs the ps view to be judged.
   const disk = due || stale.some((s) => !s.alive) ? browsersOnDisk() : { byName: new Map(), ok: false };
 
   const reap = async (s, live, why) => {
-    for (const pid of live) await terminate(pid);
-    const gone = s.paths.every(drop);
-    if (gone) actions.push(`reap ${s.name} (${why})`);
-    else actions.push(`keep ${s.name} (${why}) — o browser ainda está saindo; varre no próximo gc`);
+    // Kill-time lock check — closes the janitor's snapshot TOCTOU: a command
+    // that acquired the session lock after the protect list was taken must not
+    // see its browser die, and a command arriving during the kill waits.
+    const release = existsSync(s.dir) ? tryAcquireAt(s.dir) : null;
+    if (existsSync(s.dir) && !release) {
+      actions.push(`keep ${s.name} (${why}) — comando ativo no lock da sessão`);
+      return;
+    }
+    try {
+      let killed = true;
+      for (const pid of live) {
+        if (!(await terminateBrowser(pid, sessionProfile(s)))) { killed = false; break; }
+      }
+      if (!killed) {
+        actions.push(`keep ${s.name} (${why}) — pid não verificado como browser da sessão; nunca matar às cegas`);
+        return;
+      }
+      const gone = s.paths.every(drop);
+      if (gone) actions.push(`reap ${s.name} (${why})`);
+      else actions.push(`keep ${s.name} (${why}) — o browser ainda está saindo; varre no próximo gc`);
+    } finally { release?.(); }
   };
 
   for (const s of stale) {
     if (s.alive) { await reap(s, [s.pid], `idle ${Math.round(s.idleMin)} min > ${ttlMin}`); continue; }
     const live = disk.byName.get(s.name) || [];
     if (live.length) { await reap(s, live, `parada mas com browser de pé há ${Math.round(s.idleMin)} min`); continue; }
-    if (s.paths.every(drop)) actions.push(`rm ${s.name} (parada há ${Math.round(s.idleMin)} min)`);
+    // A command mid-launch holds the session lock with no browser up yet:
+    // never remove the files from under it.
+    const release = existsSync(s.dir) ? tryAcquireAt(s.dir) : null;
+    if (existsSync(s.dir) && !release) {
+      actions.push(`keep ${s.name} (parada há ${Math.round(s.idleMin)} min) — comando ativo no lock da sessão`);
+      continue;
+    }
+    try { if (s.paths.every(drop)) actions.push(`rm ${s.name} (parada há ${Math.round(s.idleMin)} min)`); }
+    finally { release?.(); }
   }
 
   // Re-list: the stale pass just terminated some of these browsers, and the cap
   // must count what is actually alive now, not what was alive a moment ago.
   const alive = listSessions()
-    .filter((s) => s.alive && s.name !== own)
+    .filter((s) => s.alive && !exempt(s))
     .sort((a, b) => b.idleMin - a.idleMin); // most idle first
-  const excess = alive.length + 1 - maxSessions; // +1: the session asking counts too
+  const excess = alive.length + (selfSlot ? 1 : 0) - maxSessions; // +1: the session asking counts too
   for (const s of alive.slice(0, Math.max(0, excess))) await reap(s, [s.pid], `acima do cap de ${maxSessions} sessões`);
 
   if (due) {
     for (const s of sessions) {
-      if (s.name === own) continue;
+      if (exempt(s)) continue;
       for (const pid of disk.byName.get(s.name) || []) {
-        if (Number(s.state?.pid) !== pid) {
-          if (await terminate(pid)) actions.push(`kill órfão pid ${pid} (sessão ${s.name}, sem state que o reconheça)`);
-        }
+        if (Number(s.state?.pid) === pid) continue;
+        // A browser the state does not know may be a command mid-launch (its
+        // state.json not written yet): with the session lock held, back off.
+        const release = existsSync(s.dir) ? tryAcquireAt(s.dir) : null;
+        if (existsSync(s.dir) && !release) continue;
+        try {
+          if (await terminateBrowser(pid, sessionProfile(s))) actions.push(`kill órfão pid ${pid} (sessão ${s.name}, sem state que o reconheça)`);
+        } finally { release?.(); }
       }
     }
     for (const [name, pids] of disk.byName) {
       if (name === own || sessions.some((s) => s.name === name)) continue;
-      for (const pid of pids) if (await terminate(pid)) actions.push(`kill órfão pid ${pid} (sessão ${name}, sem diretório)`);
+      for (const pid of pids) {
+        if (await terminateBrowser(pid, join(BASE, name, 'profile'))) actions.push(`kill órfão pid ${pid} (sessão ${name}, sem diretório)`);
+      }
     }
     await reapForeignOrphans(actions);
   }

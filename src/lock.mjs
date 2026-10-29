@@ -30,7 +30,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const isAlive = (pid) => {
   if (!pid) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); return true; }
+  catch (err) { return err?.code === 'EPERM'; } // EPERM: exists, owned by another user
 };
 
 const owner = () => {
@@ -78,4 +79,38 @@ export const acquireSessionLock = async ({ timeoutMs = 180_000, pollMs = 50 } = 
     }
     await sleep(pollMs);
   }
+};
+
+/**
+ * Non-blocking acquire for an arbitrary session dir. The collector uses it to
+ * guard a kill point: if a live command holds the session, the collector must
+ * not touch the browser underneath it, and once the collector holds the lock
+ * a command that arrives mid-kill waits instead of driving a dying browser.
+ * Same lock scheme as acquireSessionLock — steals only a dead holder — but
+ * returns null instead of waiting when a live holder exists. The dir is a
+ * parameter (not ROOT) because one gc pass visits every session.
+ */
+export const tryAcquireAt = (dir) => {
+  const lockFile = join(dir, '.lock');
+  const tmp = join(dir, `.lock-tmp-gc-${process.pid}`);
+  for (let i = 0; i < 2; i++) {
+    try {
+      writeFileSync(tmp, String(process.pid));
+      linkSync(tmp, lockFile);
+      unlinkSync(tmp);
+      return () => { // only remove our own lock
+        try { if (Number(readFileSync(lockFile, 'utf8')) === process.pid) unlinkSync(lockFile); } catch { /* gone */ }
+      };
+    } catch (err) {
+      try { unlinkSync(tmp); } catch { /* fine */ }
+      if (err?.code !== 'EEXIST') return null; // dir missing or unwritable
+    }
+    let pid = 0;
+    try { pid = Number(readFileSync(lockFile, 'utf8')); } catch { continue; } // vanished; retry
+    if (isAlive(pid)) return null; // live holder — even a foreign one — is an active session
+    const grave = join(dir, `.lock-stale-gc-${process.pid}-${Date.now()}`);
+    try { renameSync(lockFile, grave); } catch { continue; } // another waiter stole it
+    try { unlinkSync(grave); } catch { /* already reaped */ }
+  }
+  return null;
 };

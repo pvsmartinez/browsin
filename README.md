@@ -223,6 +223,21 @@ Sessão com browser morto é apagada; sessão ociosa há mais de `BROWSIN_TTL_MI
 derrubada; acima de `BROWSIN_MAX_SESSIONS` (default 8) as mais ociosas são ceifadas. `browsin gc`
 roda isso à mão e diz o que fez, e `browsin down --all` derruba todas de uma vez.
 
+O buraco que restava: se o **último** comando que lançou browser morreu com o harness (run do pi,
+sessão do Claude, terminal perdido), ninguém mais roda `gc` — e o browser fica de pé para sempre.
+O `launch` então cria um **janitor**: um processo Node destacado, um por base (`BROWSIN_DIR`), que
+repete o mesmo `gc` num timer (no máximo a cada 10 min) e sai sozinho quando nenhuma sessão
+administrada tem browser vivo. Um por base é garantido por lock atômico com pid do dono
+(`.janitor-lock` — dono morto é detectado e o lock roubado, como o lock de sessão). Ele nunca
+ceifa a sessão de um comando em andamento (o lock de sessão vivo é revalidado no ponto de matar,
+fechando a corrida com o snapshot), e antes de qualquer `kill` o pid tem que se provar no `ps`
+como o browser do perfil da sessão (`--user-data-dir` exato + mesmo uid) — um pid reutilizado por
+processo alheio nunca é morto às cegas, nem por ele nem pelo `gc`. Nunca toca em browser de outro
+usuário (a varredura `ps` filtra por uid), herda o `BROWSIN_DIR` do launch que o criou e não
+instala nada global. `BROWSIN_JANITOR=off` desliga (a suíte de testes faz isso para ser
+hermética); `BROWSIN_JANITOR_INTERVAL_S` muda o intervalo; `BROWSIN_JANITOR_LOG=<arquivo>` loga
+as ceifas.
+
 Dois buracos que o coletor cobre e que valem saber: browser que perdeu o `state.json` (varrido por
 `ps --user-data-dir` — senão fica imortal) e a sessão `default`, que é o layout plano e por isso
 precisa ser coletada pelo `gc` de *outra* sessão (uma sessão nunca derruba o browser que está
@@ -241,6 +256,7 @@ subo é `BROWSIN_ORPHAN_GRACE_S` (default 300s).
 | `BROWSIN_DIR` | raiz (default `/tmp/browsin`); sessões nomeadas viram subdiretório, a `default` fica na raiz |
 | `BROWSIN_PORT` | porta fixa (default: 9377 + hash da sessão) |
 | `BROWSIN_TTL_MIN` · `BROWSIN_MAX_SESSIONS` | coleta: ociosidade e teto de sessões vivas |
+| `BROWSIN_JANITOR` (=off desliga) · `BROWSIN_JANITOR_INTERVAL_S` | zelador pós-harness: desliga e intervalo (default 600s) |
 
 ## Três decisões de projeto
 
@@ -253,7 +269,9 @@ lista a tela inteira em ~250 tokens onde um print custa ~1500.
 processo curto que ataca a mesma aba e drena o buffer — não existe processo de fundo guardando
 estado, e o que o CDP zera ao desconectar (viewport, coletor) é restaurado no attach a partir do
 `state.json` da sessão. `record` preserva essa decisão: os próprios comandos capturam keyframes;
-não há gravador residente entre uma ação e outra.
+não há gravador residente entre uma ação e outra. (A exceção posterior é o **janitor**: um
+processo destacado por base que só repete o `gc` no timer e não guarda estado de sessão nenhum —
+sem ele, o browser cujo harness morreu ficava de pé para sempre.)
 
 **Uma resolução de seletor para todos os comandos.** `text=`, shadow DOM e iframe vivem num só
 helper injetado (`window.__bq`), que devolve também o **offset do frame** — é o que faz um clique

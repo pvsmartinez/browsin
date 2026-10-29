@@ -27,18 +27,32 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   o adquire e o segura até o processo sair. Sem ele, dois comandos concorrentes a frio subiam dois
   browsers no mesmo perfil/porta (e o `down` deixava um órfão), e um comando lia a página do outro.
   `status`/`doctor`/`gc`/`down` nunca pegam o lock — inspecionar/resetar não pode esperar.
+- **O gc só roda em invocação — por isso existe o janitor.** `src/janitor.mjs` é um processo Node
+  destacado que `launch` cria: um por base (lock com pid do dono em `.janitor-lock`, dono morto é
+  roubado), repete o **mesmo** `gc` no timer (≤ 10 min, `BROWSIN_JANITOR_INTERVAL_S`) e sai quando
+  nenhuma sessão tem browser vivo. É a rede para browser cujo harness (run do pi, sessão Claude)
+  morreu sem rodar `gc` de novo. Ele protege sessão com lock de comando vivo (`protect` no gc) e
+  **revalida o lock no ponto de matar** (adquire o lock da sessão sem bloquear; quem o segurou
+  depois do snapshot é poupado — sem isso um comando que começou entre snapshot e ceifa perdia o
+  browser). Antes de qualquer `terminate` (também no `gc`), o pid tem que se provar no ps como
+  browser do perfil da sessão (`--user-data-dir` exato + mesmo uid; ps falhou = poupado, nunca
+  matar às cegas) — `state.pid` é dica e pode ter sido reutilizado por processo alheio. Nunca toca
+  em processo de outro usuário (ps filtra por uid, timeout de 5s) e desliga com `BROWSIN_JANITOR=off`.
+  Não instale nada global por ele — por design ele nasce do launch e morre sozinho.
 - **Abas e o leak cross-base.** `tabs` (list/use/close/auto) fixa `state.targetId`, lido por
   `pageTarget`; sem pin, segue a primeira aba. `gc` também varre bases irmãos `browsin*` (dirs
   por-run do kit, testes) e mata browser órfão sem state — sem apagar arquivos alheios
   (`BROWSIN_ORPHAN_GRACE_S` dá a carência, default 300s).
-- **Rode `test/suite.sh` (138 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
+- **Rode `test/suite.sh` (147 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
   buracos que já morderam: escala dobrada de `--dpr`, `confirm()` que trava a página, offset de
   coordenada dentro de iframe, download de blob, PDF paginado, e sessões concorrentes (isolamento,
   `gc`, órfão, cap, `down --all`).
 - A suíte é **autocontida e hermética**: cada página que um caso precisa está em `test/fixtures/`,
   e ela roda num `BROWSIN_DIR` temporário — `down`/`down --all`/`gc` nunca tocam no browser vivo de
-  outro agente. Não introduza caso que dependa de arquivo fora do repo — ele passa só na máquina
-  de quem escreveu.
+  outro agente. O janitor roda desligado na suíte (`BROWSIN_JANITOR=off`: um gc em segundo plano
+  entre passos corromperia os casos que preparam órfão/ociosa à mão — a seção própria do janitor
+  reativa por caso). Não introduza caso que dependa de arquivo fora do repo — ele passa só na
+  máquina de quem escreveu.
 - Comando ou flag novo: atualize `README.md`, `skills/browsin/SKILL.md` **e** a suíte. Ferramenta
   sem skill em dia não é chamada por ninguém.
 - Os binários são do browsin: `~/Library/Caches/browsin/{headless-shell,chromium}` (ou

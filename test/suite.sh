@@ -18,8 +18,11 @@ PASS=0; FAIL=0; FAILED=()
 # Hermetic: the suite gets its own base directory, so `down`/`down --all`/`gc`
 # never touch a live browser another agent may be driving in /tmp/browsin.
 # PI_SESSION_ID is cleared so "default" is deterministic; session cases set it
-# back per command.
+# back per command. The janitor stays off too: a background gc between suite
+# steps would race the cases that prepare orphan/idle sessions by hand (the
+# dedicated janitor section below re-enables it per case).
 export BROWSIN_DIR="$(mktemp -d /tmp/browsin-suite.XXXXXX)"
+export BROWSIN_JANITOR=off
 unset PI_SESSION_ID CLAUDE_CODE_SESSION_ID BROWSIN_SESSION
 trap 'browsin down --all >/dev/null 2>&1; rm -rf "$BROWSIN_DIR"' EXIT
 
@@ -279,13 +282,43 @@ mkdir -p "$BROWSIN_DIR/suite-morta"
 echo '{"pid": 999999, "port": 9390, "lastUsed": 1}' > "$BROWSIN_DIR/suite-morta/state.json"
 t "gc apaga sessão de browser morto" 'suite-morta'    browsin gc
 
-sleep 300 & FPID=$!
+# Fake browser: um processo cujo argv carrega --user-data-dir da sessão, para o
+# gc verificar a identidade do pid (state.json pode ter pid reutilizado) sem
+# envolver Chrome real. Um `sleep` no state.json é justamente o pid alheio que
+# o gc agora se recusa a matar.
 mkdir -p "$BROWSIN_DIR/suite-velha"
+node "$SP/fake-browser.mjs" --user-data-dir="$BROWSIN_DIR/suite-velha/profile" & FPID=$!
 echo "{\"pid\": $FPID, \"port\": 9391, \"lastUsed\": 1}" > "$BROWSIN_DIR/suite-velha/state.json"
 t "gc ceifa sessão idle"          'suite-velha'       browsin gc
 if kill -0 "$FPID" 2>/dev/null; then
   FAIL=$((FAIL+1)); FAILED+=("gc mata o processo da sessão idle"); printf '  FAIL %s\n' "gc mata o processo da sessão idle"
 else PASS=$((PASS+1)); printf '  ok   %s\n' "gc mata o processo da sessão idle"; fi
+
+# Reuso de pid: um pid VIVO no state.json que não é um browser da sessão (ps
+# não mostra --user-data-dir do perfil) nunca é morto — e a sessão fica para o
+# próximo gc, porque pode haver browser real sob ela.
+mkdir -p "$BROWSIN_DIR/suite-ajena"
+sleep 300 & GSP=$!
+echo "{\"pid\": $GSP, \"port\": 9392, \"lastUsed\": 1}" > "$BROWSIN_DIR/suite-ajena/state.json"
+t "gc poupa pid reutilizado (não-browser)" 'keep suite-ajena' browsin gc
+if kill -0 "$GSP" 2>/dev/null; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "gc não mata pid alheio do state.json"
+else FAIL=$((FAIL+1)); FAILED+=("gc não mata pid alheio do state.json"); printf '  FAIL %s\n' "gc não mata pid alheio do state.json"; fi
+kill "$GSP" 2>/dev/null; rm -rf "$BROWSIN_DIR/suite-ajena"
+
+# O fecho do TOCTOU do janitor: mesmo sem o protect-snapshot ver, o gc revalida
+# o lock da sessão NO ponto de matar — comando ativo, browser não é tocado.
+mkdir -p "$BROWSIN_DIR/suite-ativa"
+node "$SP/fake-browser.mjs" --user-data-dir="$BROWSIN_DIR/suite-ativa/profile" & GAP=$!
+STALE_MS=$(( ($(date +%s) - 7200) * 1000 ))
+printf '{"pid": %s, "port": 9393, "lastUsed": %s}' "$GAP" "$STALE_MS" > "$BROWSIN_DIR/suite-ativa/state.json"
+printf '%s' "$$" > "$BROWSIN_DIR/suite-ativa/.lock"
+t "gc poupa sessão com comando ativo" 'keep suite-ativa' browsin gc
+if kill -0 "$GAP" 2>/dev/null && [ -d "$BROWSIN_DIR/suite-ativa" ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "gc não mata sob lock de comando ativo"
+else FAIL=$((FAIL+1)); FAILED+=("gc não mata sob lock de comando ativo"); printf '  FAIL %s\n' "gc não mata sob lock de comando ativo"; fi
+kill "$GAP" 2>/dev/null; rm -rf "$BROWSIN_DIR/suite-ativa"
+
 t "gc preserva sessão viva"       'suite-b'           browsin gc
 
 # O caso que a AGENTS.md chama de headless shell imortal: o state.json some
@@ -378,6 +411,81 @@ sess suite-a open $SP/basic.html >/dev/null 2>&1
 t "down --all derruba todas"      'all sessions'      browsin down --all
 t "B caiu com --all"             'no browser running' sess suite-b status
 t "A caiu com --all"             'no browser running' sess suite-a status
+
+echo "— janitor (zelador autônomo) —"
+# Sem Chrome real: processos `sleep` fazem vez de browser no state.json. Cada
+# caso roda num BROWSIN_DIR próprio, então o gc do janitor nunca enxerga o
+# browser vivo da suíte nem o de outro agente.
+JAN="$HERE/../src/janitor.mjs"
+
+# Base sem sessões: o janitor sai de imediato e não deixa lock.
+JDE="$(mktemp -d /tmp/browsin-jan-empty.XXXXXX)"
+BROWSIN_DIR="$JDE" node "$JAN" --max-ticks 1 >/dev/null 2>&1
+if [ ! -f "$JDE/.janitor-lock" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "janitor em base vazia sai sem lock"
+else FAIL=$((FAIL+1)); FAILED+=("janitor em base vazia sai sem lock"); printf '  FAIL %s\n' "janitor em base vazia sai sem lock"; fi
+rm -rf "$JDE"
+
+# Sessão ociosa com "browser" vivo: ceifada, e o janitor sai (nada vivo restou).
+JDI="$(mktemp -d /tmp/browsin-jan-idle.XXXXXX)"
+mkdir -p "$JDI/sess-x"
+node "$SP/fake-browser.mjs" --user-data-dir="$JDI/sess-x/profile" & JFP=$!
+printf '{"pid": %s, "port": 9491, "lastUsed": 1}' "$JFP" > "$JDI/sess-x/state.json"
+BROWSIN_DIR="$JDI" BROWSIN_TTL_MIN=0 BROWSIN_JANITOR_LOG="$JDI/jan.log" node "$JAN" --max-ticks 1 >/dev/null 2>&1
+if ! kill -0 "$JFP" 2>/dev/null && [ ! -d "$JDI/sess-x" ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "janitor ceifa sessão ociosa e sai"
+else FAIL=$((FAIL+1)); FAILED+=("janitor ceifa sessão ociosa e sai"); printf '  FAIL janitor não ceifou (pid vivo? dir?)\n'; fi
+if ! kill -0 "$JFP" 2>/dev/null && [ ! -f "$JDI/.janitor-lock" ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "janitor mata o processo da sessão ociosa e libera o lock"
+else FAIL=$((FAIL+1)); FAILED+=("janitor mata o processo da sessão ociosa e libera o lock"); printf '  FAIL janitor deixou rastro\n'; fi
+rm -rf "$JDI"
+
+# Um janitor por base: com lock de dono vivo, o segundo sai sem fazer nada.
+JDS="$(mktemp -d /tmp/browsin-jan-single.XXXXXX)"
+sleep 300 & JLK=$!
+mkdir -p "$JDS/sess-x"; printf '{"pid": 999999, "lastUsed": 1}' > "$JDS/sess-x/state.json"
+printf '%s' "$JLK" > "$JDS/.janitor-lock"
+BROWSIN_DIR="$JDS" BROWSIN_TTL_MIN=0 node "$JAN" --max-ticks 1 >/dev/null 2>&1
+if [ -d "$JDS/sess-x" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "segundo janitor respeita o lock do primeiro"
+else FAIL=$((FAIL+1)); FAILED+=("segundo janitor respeita o lock do primeiro"); printf '  FAIL segundo janitor ceifou mesmo com lock de dono vivo\n'; fi
+# Dono morto: o lock é roubado (e a sessão ociosa, ceifada).
+kill "$JLK" 2>/dev/null
+BROWSIN_DIR="$JDS" BROWSIN_TTL_MIN=0 node "$JAN" --max-ticks 1 >/dev/null 2>&1
+if [ ! -d "$JDS/sess-x" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "janitor rouba lock de dono morto"
+else FAIL=$((FAIL+1)); FAILED+=("janitor rouba lock de dono morto"); printf '  FAIL lock de dono morto não roubado\n'; fi
+rm -rf "$JDS"
+
+# Sessão sob comando ativo (lock de sessão segurado por processo vivo) nunca é
+# ceifada — mesmo ociosa além do TTL.
+JDA="$(mktemp -d /tmp/browsin-jan-active.XXXXXX)"
+mkdir -p "$JDA/sess-act"
+node "$SP/fake-browser.mjs" --user-data-dir="$JDA/sess-act/profile" & JFP2=$!
+printf '{"pid": %s, "port": 9492, "lastUsed": 1}' "$JFP2" > "$JDA/sess-act/state.json"
+printf '%s' "$$" > "$JDA/sess-act/.lock"
+BROWSIN_DIR="$JDA" BROWSIN_TTL_MIN=0 node "$JAN" --max-ticks 1 >/dev/null 2>&1
+if kill -0 "$JFP2" 2>/dev/null && [ -d "$JDA/sess-act" ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "janitor poupou sessão com comando ativo"
+else FAIL=$((FAIL+1)); FAILED+=("janitor poupou sessão com comando ativo"); printf '  FAIL janitor ceifou sessão ativa\n'; fi
+kill "$JFP2" 2>/dev/null; rm -rf "$JDA"
+
+# Nenhuma outra sessão viva nesta base: senão o janitor fica, com razão, e o teste mede a ordem da suíte.
+browsin down --all >/dev/null 2>&1
+# Lançamento cria um janitor por base, deduplicado; ele morre sozinho quando a
+# última sessão viva some. Intervalo curto só para o teste.
+BROWSIN_JANITOR=on BROWSIN_JANITOR_INTERVAL_S=2 sess suite-jan open $SP/basic.html >/dev/null 2>&1
+sleep 1.5
+JPID=$(cat "$BROWSIN_DIR/.janitor-lock" 2>/dev/null)
+if [ -n "$JPID" ] && kill -0 "$JPID" 2>/dev/null; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "launch cria janitor vivo"
+else FAIL=$((FAIL+1)); FAILED+=("launch cria janitor vivo"); printf '  FAIL launch não deixou janitor (lock=%s)\n' "$JPID"; fi
+BROWSIN_JANITOR=on BROWSIN_JANITOR_INTERVAL_S=2 sess suite-jan open $SP/basic.html >/dev/null 2>&1
+JPID2=$(cat "$BROWSIN_DIR/.janitor-lock" 2>/dev/null)
+if [ "$JPID" = "$JPID2" ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "lançamentos repetidos não criam segundo janitor"
+else FAIL=$((FAIL+1)); FAILED+=("lançamentos repetidos não criam segundo janitor"); printf '  FAIL janitor trocou de pid (%s -> %s)\n' "$JPID" "$JPID2"; fi
+BROWSIN_JANITOR=on BROWSIN_JANITOR_INTERVAL_S=2 sess suite-jan down >/dev/null 2>&1
+JGONE=0
+for _ in $(seq 1 20); do kill -0 "$JPID" 2>/dev/null || { JGONE=1; break; }; sleep 0.5; done
+if [ "$JGONE" = 1 ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "janitor sai quando a última sessão morre"
+else FAIL=$((FAIL+1)); FAILED+=("janitor sai quando a última sessão morre"); printf '  FAIL janitor sobreviveu à última sessão\n'; kill "$JPID" 2>/dev/null; fi
 
 echo
 echo "RESULTADO: $PASS ok, $FAIL falhas"

@@ -6,6 +6,7 @@ import { QUERY } from './query.mjs';
 import { ensureDirs, findBinary, readState, writeState, PORT, PROFILE, STATE_FILE, SESSION } from './paths.mjs';
 import { gc, isAlive, listSessions } from './gc.mjs';
 import { acquireSessionLock } from './lock.mjs';
+import { spawnJanitor } from './janitor.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const endpoint = (port, path) => `http://127.0.0.1:${port}${path}`;
@@ -72,6 +73,10 @@ const isOurs = (pid) => {
 export const launch = async ({ headed = false } = {}) => {
   await ensureSessionLock();
   await gc();
+  // The GC only runs when a CLI command does — without a janitor, the last
+  // browser whose harness died outlives the machine's patience. Spawn one per
+  // base (it self-deduplicates by lock and exits when nothing is left to reap).
+  spawnJanitor();
 
   const state = readState();
   const home = state.port || PORT;
