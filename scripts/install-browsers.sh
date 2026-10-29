@@ -3,7 +3,8 @@
 # Chrome-for-Testing CDN. No Playwright, no npm, no Homebrew.
 #
 #   headless-shell/  the default: no UI layer, cannot appear on screen (~196 MB)
-#   chromium/        only for `browsin login`, which needs a real window (~356 MB)
+#   chromium/        only for `browsin login`, which needs a real window (~356 MB); without it,
+#                    login falls back to an installed Google Chrome or Chromium
 #
 # Usage: scripts/install-browsers.sh [--force] [--shell-only]
 set -euo pipefail
@@ -70,7 +71,8 @@ install_one chrome-headless-shell headless-shell chrome-headless-shell
 if [ "$SHELL_ONLY" -eq 0 ]; then
   install_one chrome chromium "Google Chrome for Testing.app"
 else
-  say "skipping full chromium (--shell-only): browsin login will not work"
+  say "skipping full chromium (--shell-only): browsin login falls back to an installed Google Chrome or"
+  say "Chromium (its own profile), and is unavailable without one; browsin doctor shows which"
 fi
 
 printf '%s\n' "$version" > "$DST/VERSION"

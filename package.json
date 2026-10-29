@@ -1,6 +1,6 @@
 {
   "name": "browsin",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Headless browser CLI for coding agents: screenshots and DOM with a token budget. Zero dependencies.",
   "license": "MIT",
   "author": "Pedro Martinez",
