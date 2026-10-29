@@ -1,221 +1,221 @@
 ---
 name: browsin
-description: Ver e manipular página web pelo terminal com o browsin — screenshot, PDF, DOM, console, rede, clique, upload e download num Chromium headless de perfil descartável. Use sempre que a tarefa precisar de feedback visual (dev server, protótipo, proposta, slide, landing), de inspeção de DOM/erro de console, ou de dirigir uma interface.
+description: See and drive a web page from the terminal with browsin — screenshot, PDF, DOM, console, network, click, upload and download in a headless Chromium with a throwaway profile. Use whenever a task needs visual feedback (dev server, prototype, proposal, slide, landing page), DOM or console-error inspection, or driving an interface.
 ---
 
 # browsin
 
-CLI de browser headless para agente de código. Node puro, **zero dependência**, sobe um
-`chrome-headless-shell` com perfil descartável em `/tmp/browsin/<sessão>`. Uma sessão por agente:
-dentro do pi isso é automático (`PI_SESSION_ID`), então dois agentes não dividem a mesma aba. (Quem
-já passa um `BROWSIN_DIR` — o kit do pi — é dono do namespace e fica na sessão `default`, no layout
-plano.)
+A headless browser CLI for coding agents. Plain Node, **zero dependencies**: it starts a
+`chrome-headless-shell` with a throwaway profile in `/tmp/browsin/<session>`. One session per agent:
+inside pi this is automatic (`PI_SESSION_ID`), so two agents never share a tab. (A caller that already
+passes a `BROWSIN_DIR`, such as the pi kit, owns that namespace and stays in the `default` session, in
+the flat layout.)
 
-Se `browsin` não está no PATH, a instalação é `scripts/setup.sh` no checkout do
-[browsin](https://gitlab.com/super-company-git/game-tools/browsin). `browsin doctor` diz o que está em jogo.
+If `browsin` is not on PATH, install it with `scripts/setup.sh` in a checkout of
+[browsin](https://gitlab.com/super-company-git/game-tools/browsin). `browsin doctor` shows what is in use.
 
-**Não toca no Chrome do usuário.** O headless shell não tem camada de UI: não aparece na tela dele,
-não vê cookie dele, não abre janela. É o motivo de a ferramenta existir.
+**It never touches the user's Chrome.** The headless shell has no UI layer: it does not appear on
+their screen, does not see their cookies, does not open a window. That is why the tool exists.
 
-## Comece pelo texto, não pelo pixel
+## Start with text, not pixels
 
-Esta é a regra que mais economiza no dia a dia:
+This is the rule that saves the most, day to day:
 
 ```bash
 browsin check localhost:5173 --wait 'document.querySelector("#root")?.children.length > 0'
-browsin snapshot        # a tela inteira em ~250 tokens, com seletores acionáveis
+browsin snapshot        # the whole screen in ~250 tokens, with actionable selectors
 ```
 
-`snapshot` responde "o que tem na tela?" listando cada controle com um seletor que `click` e
-`type` aceitam de volta. Um screenshot custa ~1500 tokens e responde pior — **peça pixel só
-quando a pergunta for estética** (espaçamento, cor, alinhamento, "está feio?").
+`snapshot` answers "what is on the screen?" by listing every control with a selector that `click` and
+`type` accept back. A screenshot costs ~1500 tokens and answers worse — **ask for pixels only when
+the question is aesthetic** (spacing, colour, alignment, "does it look bad?").
 
-`snap` sai em **1x e no viewport** por default de propósito: `2560x1600` custa 8x mais token que
-`1280x800`. Use `--clip '<seletor CSS>'` para recortar só o componente em discussão.
+`snap` defaults to **1x and the viewport** on purpose: `2560x1600` costs 8x the tokens of
+`1280x800`. Use `--clip '<CSS selector>'` to crop to the component under discussion.
 
-## Comandos
+## Commands
 
 ```bash
-# navegar e diagnosticar
-browsin check <url|arquivo>      # navega + problemas + rede + print, uma chamada
-browsin open <url|arquivo> · browsin reload [--hard] · browsin back
-browsin logs [--all]             # console, exceção, rejection, 4xx/5xx, recurso que falhou
-browsin network [url]            # toda request com status, no nível do protocolo
+# navigate and diagnose
+browsin check <url|file>         # navigate + problems + network + screenshot, one call
+browsin open <url|file> · browsin reload [--hard] · browsin back
+browsin logs [--all]             # console, exceptions, rejections, 4xx/5xx, failed resources
+browsin network [url]            # every request with its status, at protocol level
 
-# entender
+# understand
 browsin snapshot [--onscreen] [--limit N]
-browsin dom <seletor> [--nth N] [--html N]
-browsin text [seletor] [--limit N] [--nth N]   # innerText normalizado — leia a página sem pixel
+browsin dom <selector> [--nth N] [--html N]
+browsin text [selector] [--limit N] [--nth N]   # normalised innerText — read the page without pixels
 browsin js '<expr>'
 
-# capturar
+# capture
 browsin snap [--clip SEL] [--pad px] [--full] [--jpeg] [--dpr N] [--name X]
 browsin pdf [url] [--format a4|a3|letter] [--landscape] [--css-page-size] [--margin in]
 browsin record start [--name X] [--fps N] [--quality N] [--max-seconds N]
 browsin record status
-browsin record stop [-o saida.gif|saida.mp4] [--width N] [--max-gap s] [--keep-frames]
+browsin record stop [-o out.gif|out.mp4] [--width N] [--max-gap s] [--keep-frames]
 browsin record cancel
 
-# agir
-browsin click <sel> · hover <sel> · type <sel> <texto> [--enter] [--append]
+# act
+browsin click <sel> · hover <sel> · type <sel> <text> [--enter] [--append]
 browsin key <Enter|Tab|Escape|ArrowDown|…> [--mod cmd,shift] [--on SEL]
-browsin select <sel> <valor|rótulo> · upload <sel> <arquivo…> · download <sel>
-browsin drag <de> <para> | browsin drag <sel> --by dx,dy [--steps N]
-browsin scroll <y|top|bottom|seletor>
-browsin tabs [list] · tabs use N · tabs close N · tabs auto   # abas (popup, target=_blank)
+browsin select <sel> <value|label> · upload <sel> <file…> · download <sel>
+browsin drag <from> <to> | browsin drag <sel> --by dx,dy [--steps N]
+browsin scroll <y|top|bottom|selector>
+browsin tabs [list] · tabs use N · tabs close N · tabs auto   # tabs (popups, target=_blank)
 
-# gerir
+# manage
 browsin viewport [1280x800|iphone|ipad|desktop|wide] [--dpr N] [--mobile]
-browsin login [url] [--note "motivo"]  # janela visível, para autenticar à mão uma vez;
-                               # com --note, abre intersticial explicando o porquê
+browsin login [url] [--note "why"]  # visible window, to sign in by hand once;
+                                    # with --note, an interstitial explains why first
 browsin status · browsin doctor · browsin gc · browsin down [--fresh|--all]
 ```
 
-Seletor aceita **CSS** ou **`text=Entrar`** (o que o usuário lê — melhor que adivinhar sopa de
-classe Tailwind). Os dois atravessam **shadow DOM** e **iframe same-origin**.
+A selector is **CSS** or **`text=Sign in`** (what the user reads — better than guessing a soup of
+Tailwind classes). Both pierce **shadow DOM** and **same-origin iframes**.
 
-## Receitas
+## Recipes
 
 ```bash
-# app React/Vite: espere o mount, senão você fotografa a tela branca
+# React/Vite app: wait for the mount, or you shoot a blank page
 browsin check localhost:5173 --wait 'document.querySelector("#root")?.children.length > 0'
 
-# preencher e submeter formulário (os seletores vêm do snapshot)
-browsin type 'input[type="email"]' alguem@exemplo.com
-browsin type 'input[type="password"]' segredo
+# fill and submit a form (the selectors come from snapshot)
+browsin type 'input[type="email"]' someone@example.com
+browsin type 'input[type="password"]' secret
 browsin key Enter --on 'input[type="password"]' --wait 'location.pathname !== "/"'
 
-# documento HTML virando PDF, honrando o @page do próprio documento
-browsin pdf ./out/documento.html --css-page-size --margin 0 -o documento.pdf
+# an HTML document to PDF, honouring the document's own @page
+browsin pdf ./out/document.html --css-page-size --margin 0 -o document.pdf
 
-# quebrou no celular?
+# broken on mobile?
 browsin viewport iphone && browsin check localhost:5173
 
-# captura precisa: posição, aba certa, print limpo
-browsin viewport wide && browsin scroll 1650 && browsin click 'text=Recursos' && browsin snap --name hero
+# a precise capture: position, the right tab, a clean screenshot
+browsin viewport wide && browsin scroll 1650 && browsin click 'text=Features' && browsin snap --name hero
 
-# conferir que um fluxo funciona de ponta a ponta
-browsin click 'text=Exemplo' --wait 'document.querySelectorAll("svg rect").length > 3'
-browsin download 'text=Baixar'
+# check that a flow works end to end
+browsin click 'text=Example' --wait 'document.querySelectorAll("svg rect").length > 3'
+browsin download 'text=Download'
 
-# ler a página como texto (barato em tokens; shadow DOM e iframe same-origin funcionam)
-browsin text                          # body inteiro, cap de 2000 chars
+# read the page as text (cheap in tokens; shadow DOM and same-origin iframes work)
+browsin text                          # the whole body, capped at 2000 chars
 browsin text 'main article' --limit 400
-browsin text '.card' --nth 1          # desempata seletor que casa com vários
+browsin text '.card' --nth 1          # picks one when a selector matches several
 
-# um componente só
+# a single component
 browsin snap --clip '[data-testid="card"]' --pad 16
 
-# demonstração animada sem mandar uma sequência de screenshots ao modelo
-browsin record start --name fluxo --fps 12
-browsin click 'text=Começar'
+# an animated demo without sending the model a series of screenshots
+browsin record start --name flow --fps 12
+browsin click 'text=Start'
 browsin type 'input[name="message"]' 'Hello!'
 browsin key Enter --on 'input[name="message"]' --wait 'document.querySelector(".reply")'
-browsin record stop -o out/fluxo.gif --width 960
+browsin record stop -o out/flow.gif --width 960
 ```
 
-## Login de verdade (portal que exige conta)
+## Real login (a portal that needs an account)
 
-O perfil é descartável, mas é **em disco** — não na janela. Isso é o que faz o fluxo abaixo
-funcionar, e é o que os agentes costumam desconfiar sem razão:
+The profile is throwaway, but it lives **on disk** — not in the window. That is what makes the flow
+below work, and what agents tend to distrust for no reason:
 
-1. A tarefa cai numa tela de login. **Não preencha credenciais via `type`** e não peça senha no
-   chat — diga ao usuário, numa frase, por que precisa da janela ("preciso que você autentique
-   no painel X, vou abrir a janela do browsin").
-2. Abra a janela **visível** para o usuário autenticar:
-
-   ```bash
-   browsin login https://app.exemplo.com --note "Preciso que você autentique no painel X para eu continuar a tarefa."
-   ```
-
-   Com `--note`, a janela abre primeiro numa **intersticial** simples ("browsin login" + o
-   motivo + botão "Continue to <url>"); o usuário clica e cai na tela de login. Sem URL
-   passada, a intersticial pede pra fechar a janela ao terminar. Use quando o agente roda sem
-   o usuário estar esperando uma janela surgir na tela.
-
-3. **Espere a confirmação do usuário.** Você não vê a janela dele (é headed, não headless);
-   não tente adivinhar que ele terminou — pergunte. Fechar a janela não desloga nada.
-4. Siga headless normalmente. O próximo comando relança o browser no **mesmo perfil** e já
-   entra autenticado:
+1. The task lands on a login screen. **Do not type credentials with `type`** and do not ask for a
+   password in the chat — tell the user, in one sentence, why you need the window ("I need you to
+   sign in to dashboard X; I am opening the browsin window").
+2. Open the **visible** window for the user to sign in:
 
    ```bash
-   browsin check https://app.exemplo.com/painel
+   browsin login https://app.example.com --note "I need you to sign in to dashboard X so I can continue the task."
    ```
 
-O login vale **só para a sua sessão** (o perfil dela): outras sessões não o veem, `down` comum
-o mantém, e `down --fresh` ou a sessão ociosa além do TTL (`gc`) o apagam. No Claude Code a
-sessão é a conversa (`CLAUDE_CODE_SESSION_ID`), não a aba do terminal. A janela é trazida para a
-frente sozinha; se o macOS não deixar, a saída avisa (`warn`) — diga ao usuário para procurar
-"Google Chrome for Testing" no Dock. Se `doctor` mostrar `login unavailable`, a instalação foi `--shell-only`
-(sem camada de UI) — rode `scripts/install-browsers.sh` para ter o chromium headed.
+   With `--note`, the window first opens on a simple **interstitial** ("browsin login" + the reason +
+   a "Continue to <url>" button); the user clicks it and lands on the login screen. Without a URL, the
+   interstitial asks them to close the window when done. Use it when the agent runs without the user
+   expecting a window to appear on their screen.
 
-## Gravação e orçamento de contexto
+3. **Wait for the user's confirmation.** You do not see their window (it is headed, not headless);
+   do not guess that they finished — ask. Closing the window does not sign anything out.
+4. Carry on headless as usual. The next command relaunches the browser on the **same profile**, already
+   signed in:
 
-`record` não filma o tempo de parede: captura um keyframe inicial e outro ao fim de cada comando
-visual. Assim a pausa do agente entre `click` e `type` não vira vídeo; `--max-gap` limita cada
-intervalo a 1 segundo por default. O resultado é arquivo + sidecar JSON, nunca frames no output.
-Prefira isso quando o entregável for uma demonstração animada. Não leia cada JPEG nem o GIF de
-volta na conversa; valide duração/frames com `ffprobe` e só peça pixel de um frame específico se
-houver uma dúvida estética. `record stop` requer `ffmpeg`; `record cancel` e `down` descartam uma
-gravação ativa.
+   ```bash
+   browsin check https://app.example.com/dashboard
+   ```
 
-## Armadilhas
+The login holds **only for your session** (its profile): other sessions do not see it, a plain `down`
+keeps it, and `down --fresh` or the session idling past its TTL (`gc`) erases it. In Claude Code the
+session is the conversation (`CLAUDE_CODE_SESSION_ID`), not the terminal tab. The window is brought to
+the front on its own; when macOS does not allow it, the output warns (`warn`) — tell the user to look
+for "Google Chrome for Testing" in the Dock. When `doctor` shows `login unavailable`, the install was
+`--shell-only` (no UI layer) — run `scripts/install-browsers.sh` to get the headed Chromium.
 
-- **Esperar é o problema difícil, não capturar.** `open`/`check` já esperam, de forma limitada
-  (até 1,5s), o body deixar de ser vazio — o suficiente para muitos SPAs escaparem do print em
-  branco. Quando a app tem um marcador próprio, `--wait '<expr>'` é sempre melhor
-  (`--wait 'document.querySelector("#root")?.children.length > 0'`); `--no-wait` desliga a espera
-  automática (app só-canvas, página genuinamente vazia). `check` avisa quando ainda ficou vazio.
-- **Seletor não casou? O erro ensina.** `no match` vem com dica: zero match sugere endereçar
-  pelo que o usuário lê (`click 'text=Entrar'`); múltiplos matches dizem quantos e apontam
-  `--nth N` (0-based). Prefira `text=` a adivinhar classe gerada por framework.
-- **`text` normaliza whitespace** (linhas em branco somem) e trunca em 2000 chars por default
-  (`--limit N` para mais/menos) — é proposital: ler página custa tokens.
-- **Portal logado tem receita própria.** Veja "Login de verdade" acima: `browsin login <url>`
-  abre uma janela **visível** para o usuário autenticar à mão, uma vez; o cookie fica no perfil
-  do browsin (em disco) e todo comando headless depois herda. O primeiro comando comum depois do
-  `login` **fecha a janela** e relança headless no mesmo perfil — a página volta a `about:blank`,
-  então navegue de novo. Nunca peça as credenciais do usuário, nem as digite via `type`, nem as
-  procure em arquivo do projeto.
-- **`viewport --dpr` ≠ `snap --dpr`.** O primeiro é o `devicePixelRatio` que a *página* vê (media
-  query, `srcset`); o segundo é a densidade do arquivo de saída.
-- **`snap` do viewport não reflui a página.** O print padrão (a área visível) não usa
-  `captureBeyondViewport`, então não dispara resize — apps que redesenham no resize (canvas,
-  Blockly) ficam intactos. `--clip`/`--full` precisam dele para renderizar o que está fora da tela,
-  e aí a página é relayoutada uma vez.
-- **`logs` drena** — ler duas vezes não repete. `click`/`key`/`type` também drenam ao reportar.
-- **`--clip 'text=…'` pega o menor elemento com aquele texto**, quase sempre menor que a caixa que
-  você queria. Para print, use seletor CSS do container (ou `--pad`).
-- **`--nth` vai fora do seletor**, mas se você colar a linha inteira do snapshot
-  (`'text=Entrar --nth 1'`) o browsin separa sozinho — é o mesmo que `--nth 1`.
-- **Abas:** `target=_blank`/pollup. Por default o próximo comando segue a aba mais recente; para
-  ficar numa aba específica use `browsin tabs` (lista) e `browsin tabs use N` (fixa);
-  `browsin tabs close N` fecha e `browsin tabs auto` volta a seguir a primeira. Sem fixar, um
-  popup inesperado (OAuth, anúncio) muda o contexto sem avisar.
-- **Shadow DOM: descendente não atravessa a fronteira.** Use o seletor de dentro do componente
-  (`#shadowbtn`), não `my-widget button`.
-- **iframe cross-origin é invisível**; same-origin funciona, com offset de coordenada correto.
-- **`browsin down` ao terminar** — senão o Chromium fica de pé (~150 MB). Se outra IA trabalha em
-  paralelo, `down` mata só a *sua* sessão; `down --all --fresh` limpa tudo. Sessão ociosa por mais
-  de uma hora é ceifada sozinha. `down` também cancela a gravação ativa; rode `record stop` antes
-  dele se quiser preservar o GIF/MP4.
-- **Se o harness morrer, o janitor cobre.** Cada `launch` cria um processo destacado por base
-  (`BROWSIN_DIR`) que repete o gc no timer (≤ 10 min) e sai quando nenhuma sessão tem browser vivo
-  — é a rede de segurança para browser esquecido quando o run/agente que o lançou desaparece.
-  `BROWSIN_JANITOR=off` desliga; nada é instalado na máquina, e ele não toca em browser de outro
-  usuário nem em sessão com comando em andamento (lock revalidado no ponto de matar; todo `kill`
-  exige que o pid prove no `ps` ser o browser do perfil da sessão — pid reutilizado não é morto).
-- **Uma sessão, um browser.** Dentro do pi cada sessão e cada run de subagente ganha a sua
-  (`PI_SESSION_ID`), então agentes paralelos não brigam pela mesma aba. No Claude Code, cada
-  conversa (`CLAUDE_CODE_SESSION_ID`). Fora disso — codex, shell — a sessão vem da aba do terminal
-  (`TERM_SESSION_ID`); para separar dois fluxos na
-  mesma aba, `BROWSIN_SESSION=nome`. `browsin status` mostra a sua e as outras vivas; `browsin gc`
-  mostra e força a coleta.
-- **Comandos da mesma sessão são serializados.** Um lock por sessão impede que dois `browsin`
-  paralelos subam dois browsers ou leiam a página um do outro — não conte com paralelismo *dentro*
-  de uma sessão; o segundo comando espera o primeiro sair. Sessões diferentes rodam em paralelo de
-  verdade.
-- **Binário faltando é `scripts/install-browsers.sh`**, não `npm install`. `browsin doctor` mostra
-  qual está em jogo e grita se caiu no fallback para o Chrome do sistema.
-- **Chromium só.** Bug de Safari/WebKit ou Firefox não aparece aqui.
-- **Antes de mexer no browsin**, rode `test/suite.sh` (136 casos).
+## Recording and the context budget
+
+`record` does not film wall-clock time: it captures one keyframe at the start and one at the end of
+each visual command. The agent's pause between `click` and `type` does not become video; `--max-gap`
+caps each interval at 1 second by default. The result is a file plus a JSON sidecar, never frames in
+the output. Prefer it when the deliverable is an animated demo. Do not read each JPEG or the GIF back
+into the conversation; check duration and frames with `ffprobe`, and ask for a specific frame's pixels
+only when there is an aesthetic doubt. `record stop` needs `ffmpeg`; `record cancel` and `down` discard
+an active recording.
+
+## Traps
+
+- **Waiting is the hard problem, not capturing.** `open`/`check` already wait, for a bounded time
+  (up to 1.5 s), for the body to stop being empty — enough for many SPAs to escape the blank
+  screenshot. When the app has its own marker, `--wait '<expr>'` is always better
+  (`--wait 'document.querySelector("#root")?.children.length > 0'`); `--no-wait` turns the automatic
+  wait off (a canvas-only app, a genuinely empty page). `check` warns when the page is still empty.
+- **A selector did not match? The error teaches.** `no match` comes with a hint: zero matches suggests
+  addressing by what the user reads (`click 'text=Sign in'`); several matches say how many and point
+  to `--nth N` (0-based). Prefer `text=` to guessing a framework-generated class.
+- **`text` normalises whitespace** (blank lines disappear) and truncates at 2000 chars by default
+  (`--limit N` for more or less) — on purpose: reading a page costs tokens.
+- **A logged-in portal has its own recipe.** See "Real login" above: `browsin login <url>` opens a
+  **visible** window for the user to sign in by hand, once; the cookie stays in browsin's profile (on
+  disk) and every later headless command inherits it. The first ordinary command after `login`
+  **closes the window** and relaunches headless on the same profile — the page goes back to
+  `about:blank`, so navigate again. Never ask for the user's credentials, never type them with `type`,
+  never look for them in project files.
+- **`viewport --dpr` ≠ `snap --dpr`.** The first is the `devicePixelRatio` the *page* sees (media
+  queries, `srcset`); the second is the density of the output file.
+- **A viewport `snap` does not reflow the page.** The default screenshot (the visible area) does not
+  use `captureBeyondViewport`, so it triggers no resize — apps that redraw on resize (canvas, Blockly)
+  stay intact. `--clip`/`--full` need it to render what is off screen, and then the page is laid out
+  again once.
+- **`logs` drains** — reading twice does not repeat. `click`/`key`/`type` also drain when they report.
+- **`--clip 'text=…'` takes the smallest element with that text**, almost always smaller than the box
+  you wanted. For a screenshot, use the container's CSS selector (or `--pad`).
+- **`--nth` goes outside the selector**, but if you paste the whole snapshot line
+  (`'text=Sign in --nth 1'`) browsin splits it itself — the same as `--nth 1`.
+- **Tabs:** `target=_blank`/popups. By default the next command follows the newest tab; to stay on a
+  specific tab use `browsin tabs` (list) and `browsin tabs use N` (pin); `browsin tabs close N` closes
+  one and `browsin tabs auto` goes back to following the first. Without pinning, an unexpected popup
+  (OAuth, an ad) changes the context without warning.
+- **Shadow DOM: a descendant combinator does not cross the boundary.** Use the selector from inside
+  the component (`#shadowbtn`), not `my-widget button`.
+- **A cross-origin iframe is invisible**; same-origin works, with correct coordinate offsets.
+- **`browsin down` when you are done** — otherwise Chromium stays up (~150 MB). If another AI works in
+  parallel, `down` kills only *your* session; `down --all --fresh` cleans everything. A session idle
+  for more than an hour is reaped on its own. `down` also cancels the active recording; run
+  `record stop` before it to keep the GIF/MP4.
+- **If the harness dies, the janitor covers it.** Each `launch` creates one detached process per base
+  (`BROWSIN_DIR`) that repeats the gc on a timer (≤ 10 min) and exits when no session has a live
+  browser — the safety net for a browser forgotten when the run or agent that launched it disappears.
+  `BROWSIN_JANITOR=off` turns it off; nothing is installed on the machine, and it never touches another
+  user's browser nor a session with a command running (the lock is re-checked at the point of killing;
+  every `kill` requires the pid to prove in `ps` that it is the browser of that session's profile — a
+  reused pid is never killed).
+- **One session, one browser.** Inside pi each session and each subagent run gets its own
+  (`PI_SESSION_ID`), so parallel agents never fight over the same tab. In Claude Code, each
+  conversation (`CLAUDE_CODE_SESSION_ID`). Elsewhere — codex, a shell — the session comes from the
+  terminal tab (`TERM_SESSION_ID`); to separate two flows in the same tab, `BROWSIN_SESSION=name`.
+  `browsin status` shows yours and the other live ones; `browsin gc` shows and forces the collection.
+- **Commands of the same session are serialised.** A per-session lock keeps two parallel `browsin`
+  calls from starting two browsers or reading each other's page — do not count on parallelism
+  *within* a session; the second command waits for the first to exit. Different sessions really run
+  in parallel.
+- **A missing binary means `scripts/install-browsers.sh`**, not `npm install`. `browsin doctor` shows
+  which one is in use and shouts when it fell back to the system Chrome.
+- **Chromium only.** A Safari/WebKit or Firefox bug does not show here.
+- **Before changing browsin**, run `test/suite.sh`.
