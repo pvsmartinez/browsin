@@ -12,7 +12,7 @@ já passa um `BROWSIN_DIR` — o kit do pi — é dono do namespace e fica na se
 plano.)
 
 Se `browsin` não está no PATH, a instalação é `scripts/setup.sh` no checkout do
-[browsin](https://github.com/pvsmartinez/browsin). `browsin doctor` diz o que está em jogo.
+[browsin](https://gitlab.com/super-company-git/game-tools/browsin). `browsin doctor` diz o que está em jogo.
 
 **Não toca no Chrome do usuário.** O headless shell não tem camada de UI: não aparece na tela dele,
 não vê cookie dele, não abre janela. É o motivo de a ferramenta existir.

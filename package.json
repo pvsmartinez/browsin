@@ -6,7 +6,7 @@
   "author": "Pedro Martinez",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pvsmartinez/browsin.git"
+    "url": "git+https://gitlab.com/super-company-git/game-tools/browsin.git"
   },
   "type": "module",
   "bin": {

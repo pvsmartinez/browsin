@@ -39,7 +39,7 @@ Chromium vêm direto do CDN Chrome-for-Testing do Google. O comando opcional `re
 `ffmpeg` (`brew install ffmpeg`) para montar GIF/MP4; todo o restante funciona sem ele.
 
 ```bash
-git clone git@github.com:pvsmartinez/browsin.git && cd browsin
+git clone git@gitlab.com:super-company-git/game-tools/browsin.git && cd browsin
 scripts/setup.sh                 # browsers + `browsin` no PATH + skill do agente
 ```
 
