@@ -145,7 +145,8 @@ below work, and what agents tend to distrust for no reason:
    ```
 
 The login holds **only for your session** (its profile): other sessions do not see it, a plain `down`
-keeps it, and `down --fresh` or the session idling past its TTL (`gc`) erases it. In Claude Code the
+keeps it, and `down --fresh`, the session idling past its TTL (`gc`) or the live-session cap erases it (above
+`BROWSIN_MAX_SESSIONS`, default 8, the most idle session is closed with its profile). In Claude Code the
 session is the conversation (`CLAUDE_CODE_SESSION_ID`), not the terminal tab. The window is brought to
 the front on its own; when macOS does not allow it, the output warns (`warn`) — tell the user to look
 for "Google Chrome for Testing" in the Dock. When `doctor` shows `login unavailable`, no windowed browser was
@@ -201,7 +202,8 @@ an active recording.
 - **A cross-origin iframe is invisible**; same-origin works, with correct coordinate offsets.
 - **`browsin down` when you are done** — otherwise Chromium stays up (~150 MB). If another AI works in
   parallel, `down` kills only *your* session; `down --all --fresh` cleans everything. A session idle
-  for more than an hour is reaped on its own. `down` also cancels the active recording; run
+  for more than an hour is reaped on its own, and so is the most idle one above 8 live sessions
+  (`BROWSIN_MAX_SESSIONS`); its profile, a login included, goes with it. `down` also cancels the active recording; run
   `record stop` before it to keep the GIF/MP4.
 - **If the harness dies, the janitor covers it.** Each `launch` creates one detached process per base
   (`BROWSIN_DIR`) that repeats the gc on a timer (≤ 10 min) and exits when no session has a live

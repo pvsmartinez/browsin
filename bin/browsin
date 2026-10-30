@@ -101,7 +101,8 @@ Flags: --wait '<expr>'  --timeout ms  --dpr N  --nth N  --clip SEL --pad px  --f
 Never uses your Chrome profile: a throwaway profile in /tmp/browsin, on the headless shell
 (an installed Chrome only as a fallback, which doctor flags).
 One browser per session (BROWSIN_SESSION, else PI_SESSION_ID, else "default"); sessions
-idle past BROWSIN_TTL_MIN (default 60) are reaped automatically — see browsin gc. A detached
+idle past BROWSIN_TTL_MIN (default 60), and the most idle ones above BROWSIN_MAX_SESSIONS
+(default 8) live, are reaped automatically with their profile (a login too) — see browsin gc. A detached
 janitor per base (spawned by launch, BROWSIN_JANITOR=off to disable) keeps reaping even if
 the harness that launched the browser is long gone.
 Commands in the same session are serialized: a parallel browsin waits its turn instead of

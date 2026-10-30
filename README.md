@@ -309,7 +309,8 @@ antes de mexer em qualquer coisa.
 
   O primeiro comando comum depois do `login` fecha a janela visível e relança headless no mesmo
   perfil; a página volta a `about:blank` (o cookie, não a navegação, é o que persiste). O login
-  é da sessão: outras não o veem, e `down --fresh` ou o TTL de ociosidade o apagam. Ambos os
+  é da sessão: outras não o veem, e `down --fresh`, o TTL de ociosidade ou o teto de sessões vivas
+  (`BROWSIN_MAX_SESSIONS`, a mais ociosa sai com o perfil) o apagam. Ambos os
   builds rodam com `--use-mock-keychain` — sem isso o chromium headed cifra o cookie com a chave
   do Keychain e o headless shell não decifra, e o login some no relançamento. A janela é ativada
   por pid (`NSRunningApplication`), porque um processo destacado nasce atrás de tudo.

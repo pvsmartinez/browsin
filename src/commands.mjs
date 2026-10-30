@@ -780,7 +780,7 @@ export const cmdStatus = async () => {
     sessLine,
     `bin   ${bin}`,
     `view  ${vp.width}x${vp.height} @${vp.dpr}x`,
-    `prof  ${PROFILE} (cookies persist here until --fresh)`,
+    `prof  ${PROFILE} (cookies persist until --fresh, the idle TTL or the session cap)`,
     doc].join('\n');
 };
 
