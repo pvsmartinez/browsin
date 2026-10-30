@@ -2,10 +2,10 @@ import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { bringToFront, connect, launch, shutdown, shutdownAll, status as browserStatus } from './browser.mjs';
 import { SNAPSHOT } from './query.mjs';
-import { buildLoginNoteHtml } from './login-note.mjs';
+import { buildLoginNoteHtml, loginGuideLines } from './login-note.mjs';
 import { gc, listSessions } from './gc.mjs';
 import { afterAction, cancelRecording, startRecording, statusRecording, stopRecording } from './recording.mjs';
-import { readState, writeState, findBinary, SHOTS, DOWNLOADS, PROFILE, BROWSERS, BASE, SESSION, ensureDirs } from './paths.mjs';
+import { readState, writeState, findBinary, SHOTS, DOWNLOADS, PROFILE, BROWSERS, BASE, SESSION, TTL_MIN, MAX_SESSIONS, ensureDirs } from './paths.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -973,13 +973,6 @@ export const cmdLogin = async (args) => {
     `login window open (headed chromium) — ${where}`,
     ...(shown || process.platform !== 'darwin' ? [] : ['warn  could not bring the window to front — tell the user to look for "Google Chrome for Testing" in the Dock']),
     ...(note ? [`note  interstitial shown first: "${note}" — the user reads the why before the site loads`] : []),
-    'The USER signs in by hand in that visible window. Never type credentials via headless',
-    'commands, never ask for them in chat — just tell the user why the window is open and',
-    'WAIT until they confirm. You cannot see a headed window; do not guess they are done.',
-    'Closing the window does NOT log out: cookies live on disk in browsin\'s profile, not in',
-    'the window. Your next headless command relaunches on the same profile, already',
-    'authenticated — the task continues exactly where it stopped.',
-    'The login belongs to THIS session only (its own profile): other sessions never see it,',
-    'and `down --fresh` or the session idling past the TTL (gc) wipes it.',
+    ...loginGuideLines({ ttlMin: TTL_MIN, maxSessions: MAX_SESSIONS }),
   ].join('\n');
 };

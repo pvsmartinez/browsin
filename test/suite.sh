@@ -184,6 +184,14 @@ if echo "$NOTE_HTML" | grep -q 'painel de faturas' && echo "$NOTE_HTML" | grep -
 else
   FAIL=$((FAIL+1)); FAILED+=("login note: contém a note e o href do destino"); printf '  FAIL %s\n' "login note"
 fi
+GUIDE="$(node --input-type=module -e "
+  import { loginGuideLines } from '$HERE/../src/login-note.mjs';
+  console.log(loginGuideLines({ ttlMin: 60, maxSessions: 8 }).join(' '));")"
+if echo "$GUIDE" | grep -q 'down --fresh' && echo "$GUIDE" | grep -q 'TTL (60 min)' && echo "$GUIDE" | grep -q 'more than 8 sessions are alive (BROWSIN_MAX_SESSIONS)' && echo "$GUIDE" | grep -q 'profile deleted, the login with it'; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "login diz as 3 formas de perder o login (fresh, TTL, teto de sessões)"
+else
+  FAIL=$((FAIL+1)); FAILED+=("login diz as 3 formas de perder o login (fresh, TTL, teto de sessões)"); printf '  FAIL %s\n' "login diz as 3 formas de perder o login"
+fi
 NOTE_HTML2="$(login_html 'só explicar' '')"
 if echo "$NOTE_HTML2" | grep -q 'Close this window when done' && ! echo "$NOTE_HTML2" | grep -q 'href='; then
   PASS=$((PASS+1)); printf '  ok   %s\n' "login note sem url: pede pra fechar a janela"

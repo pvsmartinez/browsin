@@ -5,6 +5,23 @@
  * leak an href into the no-URL case the tests check), no side effects —
  * trivially testable.
  */
+
+/**
+ * What `browsin login` tells the agent after the window opens: who signs in, and
+ * how long the login lasts. Pure for the same reason as the page below.
+ */
+export const loginGuideLines = ({ ttlMin, maxSessions }) => [
+  'The USER signs in by hand in that visible window. Never type credentials via headless',
+  'commands, never ask for them in chat — just tell the user why the window is open and',
+  'WAIT until they confirm. You cannot see a headed window; do not guess they are done.',
+  'Closing the window does NOT log out: cookies live on disk in browsin\'s profile, not in',
+  'the window. Your next headless command relaunches on the same profile, already',
+  'authenticated — the task continues exactly where it stopped.',
+  'The login belongs to THIS session only (its own profile): other sessions never see it.',
+  `It is wiped by \`down --fresh\`, by the session idling past the TTL (${ttlMin} min), or`,
+  `when more than ${maxSessions} sessions are alive (BROWSIN_MAX_SESSIONS): the most idle one is`,
+  'then closed and its profile deleted, the login with it.',
+];
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
