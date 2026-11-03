@@ -26,6 +26,20 @@ export BROWSIN_JANITOR=off
 unset PI_SESSION_ID CLAUDE_CODE_SESSION_ID BROWSIN_SESSION
 trap 'browsin down --all >/dev/null 2>&1; rm -rf "$BROWSIN_DIR"' EXIT
 
+tx() { # tx <nome> <exit esperado> <regex esperado> <comando...> — quando o código de saída é contrato
+  local nome="$1" wantc="$2" want="$3"; shift 3
+  local out code; out=$("$@" 2>&1); code=$?
+  if [ "$code" = "$wantc" ] && echo "$out" | grep -qE "$want"; then PASS=$((PASS+1)); printf '  ok   %s\n' "$nome"
+  else FAIL=$((FAIL+1)); FAILED+=("$nome"); printf '  FAIL %s\n       esperava exit %s e /%s/, veio exit %s: %s\n' "$nome" "$wantc" "$want" "$code" "$(echo "$out" | head -3 | tr '\n' '|')"; fi
+}
+
+tnot() { # tnot <nome> <regex proibido> <comando...>
+  local nome="$1" bad="$2"; shift 2
+  local out; out=$("$@" 2>&1)
+  if ! echo "$out" | grep -qE "$bad"; then PASS=$((PASS+1)); printf '  ok   %s\n' "$nome"
+  else FAIL=$((FAIL+1)); FAILED+=("$nome"); printf '  FAIL %s\n       não devia ter /%s/: %s\n' "$nome" "$bad" "$(echo "$out" | grep -E "$bad" | head -2 | tr '\n' '|')"; fi
+}
+
 t() { # t <nome> <regex esperado> <comando...>
   local nome="$1" want="$2"; shift 2
   local out; out=$("$@" 2>&1)
@@ -50,6 +64,59 @@ echo "— espera de mount (SPA) —"
 t "open espera o mount por padrão" 'title Montou'      browsin open $SP/slowmount.html
 t "open --no-wait não espera"      'title Aguardando'  browsin open $SP/slowmount.html --no-wait
 browsin open $SP/basic.html >/dev/null
+
+# Âncora (#) só: navegação no mesmo documento não tem load event; esperar por
+# ele custava o --timeout inteiro e uma nota falsa.
+t "check só de âncora não espera load" '^check .*#secao' browsin check "$SP/basic.html#secao" --no-snap --timeout 4000
+tnot "check só de âncora sem nota falsa" 'load event never fired' browsin check "$SP/basic.html#outra" --no-snap --timeout 4000
+
+# QA gate (check --fail-on): servidor HTTP de verdade, porque status 4xx/5xx,
+# API lenta que falha depois do mount, abort e request sem fim não existem em
+# file://. Cada página monta como SPA (#root vazio até um timer).
+echo "— QA gate (check --fail-on / --json) —"
+GATE_PORT_FILE="$BROWSIN_DIR/gate-port"
+node "$SP/gate-server.mjs" > "$GATE_PORT_FILE" 2>/dev/null &
+GATE_PID=$!
+trap 'kill $GATE_PID 2>/dev/null; browsin down --all >/dev/null 2>&1; rm -rf "$BROWSIN_DIR"' EXIT
+for _ in $(seq 1 50); do [ -s "$GATE_PORT_FILE" ] && break; sleep 0.1; done
+G="http://127.0.0.1:$(head -1 "$GATE_PORT_FILE")"
+MOUNT='document.querySelector("#root")?.children.length > 0'
+tx "gate: página limpa sai 0"             0 '^gate  ok$'                 browsin check "$G/clean" --wait "$MOUNT" --fail-on errors --no-snap
+tx "gate: json limpo"                     0 '^  "ok": true'              browsin check "$G/clean" --wait "$MOUNT" --fail-on errors --json --no-snap
+tx "gate: 500 tardio da API sai 2"        2 'gate  FAIL.*1 exception.*1 console error.*1 failed request' browsin check "$G/late" --wait "$MOUNT" --fail-on errors --no-snap
+tx "gate: json traz URL e status"         2 '"status": 500'              browsin check "$G/late" --wait "$MOUNT" --fail-on errors --json --no-snap
+tx "gate: json traz exceção tardia"       2 'late boom'                  browsin check "$G/late" --wait "$MOUNT" --fail-on errors --json --no-snap
+tx "gate: só a categoria pedida conta"    0 '^gate  ok$'                 browsin check "$G/late" --wait "$MOUNT" --fail-on wait --no-snap
+tx "gate: --settle 0 não espera a API"    0 '^gate  ok$'                 browsin check "$G/late" --wait "$MOUNT" --fail-on errors --settle 0 --no-snap
+tx "gate: 404 de recurso falha"           2 '\[404\] Image .*/noise\.png' browsin check "$G/noise" --wait "$MOUNT" --fail-on errors --no-snap
+tx "gate: --ignore tira o ruído"          0 'gate  ok \(1 ignored\)'     browsin check "$G/noise" --wait "$MOUNT" --fail-on errors --ignore 'noise\.png$' --no-snap
+tx "gate: --ignore repete"                0 '"failedRequests": 1'        browsin check "$G/noise" --wait "$MOUNT" --fail-on errors --ignore 'nada' --ignore 'noise\.png$' --json --no-snap
+tx "gate: erro antes de redirect conta"   2 'FAIL — 1 exception · 1 console error' browsin check "$G/redirect" --wait "$MOUNT" --fail-on errors --no-snap
+tx "gate: rejection tratada depois não conta" 0 '^gate  ok$'             browsin check "$G/handled" --wait "$MOUNT" --fail-on errors --no-snap
+# Runtime.enable devolve o histórico do console da página que o comando anterior deixou.
+browsin open "$G/clean" >/dev/null 2>&1; browsin js 'console.error("historico velho"); 1' >/dev/null 2>&1
+tx "gate: histórico da página anterior não conta" 0 '^gate  ok$'         browsin check "$G/clean" --wait "$MOUNT" --fail-on errors --no-snap
+tx "gate: 404 abortado depois dos headers conta" 2 '\[404\] Fetch .*/api/slowbody404' browsin check "$G/abort404" --wait "$MOUNT" --fail-on network --no-snap
+browsin open "$G/noisy" >/dev/null 2>&1
+tx "gate: erro da rota anterior não vaza"  0 '^gate  ok$'                browsin check "$G/slowdoc" --wait "$MOUNT" --fail-on errors --no-snap
+browsin open "$G/iframeloop" >/dev/null 2>&1
+tx "gate: iframe 404 da rota anterior não vaza" 0 '^gate  ok$'          browsin check "$G/slowdoc" --wait "$MOUNT" --fail-on errors --no-snap
+tx "gate: fetch abortado não é falha"     0 '^gate  ok$'                 browsin check "$G/abort" --wait "$MOUNT" --fail-on errors --no-snap
+tx "gate: falha de rede traz a URL"       2 '\[net::ERR_[A-Z_]+\] Fetch http://127\.0\.0\.1:1/recusado' browsin check "$G/netfail" --wait "$MOUNT" --fail-on network --no-snap
+tx "gate: documento 500 falha"            2 '\[500\] Document'           browsin check "$G/doc500" --fail-on network --no-snap
+tx "gate: --wait nunca verdadeiro sai 2"  2 'FAIL — --wait never true'   browsin check "$G/nomount" --wait "$MOUNT" --fail-on errors --timeout 1000 --no-snap
+tx "gate: request sem fim é pending, não falha" 0 '"pending": \[$'       browsin check "$G/stream" --wait "$MOUNT" --fail-on errors --settle 200 --timeout 1500 --json --no-snap
+tx "gate: página inalcançável sai 2 com json" 2 '"error": "net::ERR_'    browsin check http://127.0.0.1:1/ --fail-on errors --json
+tx "gate: categoria inválida sai 1 com json" 1 '"fatal":true'            browsin check "$G/clean" --fail-on bogus --json
+tx "gate: regex inválida sai 1"           1 'invalid regex'              browsin check "$G/clean" --fail-on errors --ignore '(' --no-snap
+tx "gate: json traz o screenshot"         0 '"shot": ".*/gate-clean\.png"' browsin check "$G/clean" --wait "$MOUNT" --fail-on errors --json --name gate-clean
+tx "gate: --name com barra vira nome de arquivo" 0 '"shot": ".*/experiments-detail\.png"' browsin check "$G/clean" --wait "$MOUNT" --fail-on errors --json --name experiments/detail
+tx "gate: --ignore não espera o stream"   0 '"settleMs": ([0-9]{1,3}|[0-4][0-9]{3})$'     browsin check "$G/stream" --wait "$MOUNT" --fail-on errors --settle 200 --timeout 5000 --ignore '/api/stream$' --json --no-snap
+t  "open --wait falso avisa"              'never became true'           browsin open "$G/nomount" --wait 'false' --timeout 300
+tx "check sem --fail-on segue saindo 0"   0 'logs  [0-9]+ problem'       browsin check "$SP/basic.html" --no-snap
+tx "check --json sem --fail-on sai 0"     0 '^  "ok": false'             browsin check "$SP/basic.html" --json --no-snap
+# O servidor sai aqui: um `wait` sem pid mais adiante esperaria por ele para sempre.
+kill $GATE_PID 2>/dev/null; wait $GATE_PID 2>/dev/null
 
 echo "— entender a tela —"
 t "snapshot lista controles"      '\[button\]'                browsin snapshot
@@ -136,6 +203,12 @@ t "type sem match ensina text="    'hint.*text='  browsin type '#nada' 'x'
 t "type --append"         'ditado pelo agente mais' browsin type '#inp' ' mais' --append
 t "key Tab"               'key   Tab'          browsin key Tab
 t "key com modificador"   'shift'              browsin key ArrowDown --mod shift
+# --wait que nunca fica verdadeiro depois de uma ação tem que aparecer: o
+# silêncio era lido como "o fluxo funcionou".
+t "click --wait falso avisa"  'never became true'  browsin click '#b' --wait 'false' --timeout 300
+t "key --wait falso avisa"    'never became true'  browsin key Tab --wait 'false' --timeout 300
+t "reload --wait falso avisa" 'never became true'  browsin reload --wait 'false' --timeout 300
+tnot "click --wait verdadeiro não avisa" 'never became true' browsin click '#b' --wait 'true'
 t "hover"                 'hover'              browsin hover '#b'
 browsin open $SP/tall.html >/dev/null
 t "scroll y (página alta)" "scrl  y=200" browsin scroll 200

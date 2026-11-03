@@ -18,7 +18,9 @@ const c = await import('../src/commands.mjs');
 const fs = await import('node:fs');
 
 const BOOLEAN = new Set(['full', 'mobile', 'all', 'no-snap', 'no-wait', 'no-background', 'help', 'version', 'landscape',
-  'jpeg', 'hard', 'fresh', 'net', 'failed', 'onscreen', 'append', 'enter', 'css-page-size', 'keep-frames']);
+  'jpeg', 'hard', 'fresh', 'net', 'failed', 'onscreen', 'append', 'enter', 'css-page-size', 'keep-frames', 'json']);
+// Flags that may repeat; every occurrence is kept, in order.
+const REPEATABLE = new Set(['ignore']);
 
 const camel = (s) => s.replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
 
@@ -31,10 +33,12 @@ const parse = (argv) => {
       const [rawKey, inline] = tok.slice(2).split(/=(.*)/s);
       // Boolean flag names stay verbatim so `--no-snap` reads as written.
       const key = BOOLEAN.has(rawKey) ? rawKey : camel(rawKey);
-      if (inline !== undefined) args[key] = inline;
-      else if (BOOLEAN.has(rawKey)) args[key] = true;
-      else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) args[key] = argv[++i];
-      else args[key] = true;
+      let value;
+      if (inline !== undefined) value = inline;
+      else if (BOOLEAN.has(rawKey)) value = true;
+      else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) value = argv[++i];
+      else value = true;
+      args[key] = REPEATABLE.has(rawKey) ? [...(args[key] || []), value] : value;
       continue;
     }
     if (tok === '-o') { args.o = argv[++i]; continue; }
@@ -63,6 +67,7 @@ const ALIASES = { snaps: 'snapshot', ss: 'snapshot', shot: 'snap', screenshot: '
 const USAGE = `browsin — headless browser for coding agents. Text first, pixels on request.
 
 navigate   check <url|file>      navigate + problems + network + screenshot, one call
+             [--fail-on errors] [--json] [--settle ms] [--ignore REGEX]…   QA gate: exit 2 on problems
            open <url|file>       navigate and report
            reload [--hard] · back
 observe    snapshot              what is on screen, as actionable selectors  <- start here
@@ -96,6 +101,7 @@ Flags: --wait '<expr>'  --timeout ms  --dpr N  --nth N  --clip SEL --pad px  --f
        --format F --landscape --margin in --scale N --no-background --css-page-size
        --mod cmd,shift  --on SEL  --by dx,dy  --steps N  --limit N  --onscreen
        --append  --enter  --net  --all  --no-snap  --no-wait  --hard  --fresh
+       --fail-on errors|exceptions,console,network,wait  --json  --settle ms  --ignore REGEX
        --fps N  --max-seconds N  --max-gap s  --keep-frames
 
 Never uses your Chrome profile: a throwaway profile in /tmp/browsin, on the headless shell
@@ -186,11 +192,16 @@ if (!fn) {
   process.exit(1);
 }
 
+// A command returns its text, or { out, code } when the exit code is part of
+// its contract (check --fail-on: 2 = the page failed the gate).
 try {
-  const out = await fn(args);
+  const res = await fn(args);
+  const { out, code = 0 } = res && typeof res === 'object' ? res : { out: res };
   if (out) console.log(out);
-  process.exit(0);
+  process.exit(code);
 } catch (err) {
   console.error(`browsin ${name}: ${err.message}`);
+  // --json promises JSON on stdout even when browsin itself failed (exit 1).
+  if (args.json) console.log(JSON.stringify({ ok: false, error: err.message, fatal: true }));
   process.exit(1);
 }

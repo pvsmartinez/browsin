@@ -131,7 +131,7 @@ Configuração — workspace (`<raiz>/.pi/tools.json`) ou global (`~/.pi/agent/t
 
 | | |
 |---|---|
-| `check <url\|arquivo>` | navega, lista problemas, rede e print — uma chamada |
+| `check <url\|arquivo>` | navega, lista problemas, rede e print — uma chamada; com `--fail-on`, vira QA gate (abaixo) |
 | `open <url\|arquivo>` · `reload [--hard]` · `back` | navegação |
 | `snapshot` | **comece aqui**: o que tem na tela, como seletores acionáveis |
 | `dom <sel>` | rect, visibilidade, estilos computados, `outerHTML` truncado |
@@ -161,6 +161,42 @@ browsin text                          # página inteira (default: body, cap de 2
 browsin text 'main article' --limit 400
 browsin text '.card' --nth 1          # 2º match, quando o seletor casa com vários
 ```
+
+### QA gate: `check --fail-on`
+
+Para um `make qa` ou uma esteira que abre rota por rota e precisa de um veredito de máquina:
+
+```bash
+BROWSIN_SESSION=qa browsin check localhost:5173/experiments \
+  --wait 'document.querySelector("#root")?.children.length > 0' \
+  --fail-on errors --json --name experiments --ignore 'favicon\.ico$'
+BROWSIN_SESSION=qa browsin down      # no fim da bateria
+```
+
+- **Saída:** `0` página limpa · `2` a página falhou o gate (ou nem carregou) · `1` o próprio
+  browsin não rodou (flag inválida, browser não subiu). Sem `--fail-on`, `check` sai `0` como sempre.
+- **`--fail-on`**: `errors` (= tudo) ou lista com vírgula de `exceptions` (exceção não capturada e
+  promise rejeitada), `console` (`console.error` e `console.assert` que falhou), `network` (request com HTTP ≥ 400 ou falha de
+  rede, com URL e status; request **cancelada antes da resposta** — `AbortController`, StrictMode do
+  React — não conta; resposta 4xx/5xx conta mesmo se a página abortar o corpo)
+  e `wait` (o `--wait` nunca ficou verdadeiro).
+- **`--settle ms`** (default `1000` com `--fail-on`, `0` sem): depois do mount, observa mais esse
+  tempo e então espera as requests ainda em voo terminarem (até `--timeout`, default 15000) — é o
+  que pega a API que dá 500 depois do mount e o render que quebra com a resposta. O que ainda está
+  em voo no fim (stream, long-poll) vai em `pending` e não reprova.
+- **`--ignore REGEX`** (repetível): tira do veredito a request cuja URL casa, ou a exceção/erro de
+  console cuja mensagem casa (e o settle não espera por request ignorada); a contagem do que foi
+  ignorado vem em `ignored`.
+- **`--json`**: um objeto em stdout — `ok`, `target`, `url`, `title`, `failOn`, `wait {expr, ok}`,
+  `error` (falha de navegação, ex. `net::ERR_CONNECTION_REFUSED`, senão `null`), `exceptions[{kind,
+  message}]`, `consoleErrors[{message}]`, `failedRequests[{method, url, type, status, error}]`
+  (`status` `null` quando a falha é de rede, com `error`), `pending[{method, url, type}]`,
+  `ignored{exceptions, consoleErrors, failedRequests, pending}`, `requests`, `warnings`, `notes`,
+  `dialogs`, `timing{totalMs, settleMs}`, `shot` (caminho do print, `null` com `--no-snap`). Com
+  exit `1`, stdout traz `{"ok": false, "error": "…", "fatal": true}`.
+- Rotas em sequência numa mesma sessão; `--name <rota>` para um print por rota (senão todas
+  sobrescrevem `check.png`). Uma `BROWSIN_SESSION` própria mantém o gate fora do browser da sua
+  sessão interativa.
 
 ### Gravar uma demonstração
 
@@ -283,7 +319,8 @@ por coordenada acertar um botão dentro de um iframe. Comando novo herda tudo is
 test/suite.sh     # suíte de aceitação, incluindo os casos que só quebram em documento real
 ```
 
-A bateria cobre console/rede/recurso, snapshot, os quatro modos de `snap`, PDF paginado, diálogo
+A bateria cobre console/rede/recurso, o QA gate (`check --fail-on`, contra um servidor HTTP de
+fixture: 500 tardio, 404, abort, request sem fim, página inalcançável), snapshot, os quatro modos de `snap`, PDF paginado, diálogo
 `confirm()`, select, upload, download de blob, drag em canvas, shadow DOM, iframe, sessões
 concorrentes (incluindo cold start paralelo), o lock de sessão e a coleta, e todos os caminhos de
 erro. É **hermética**: roda num `BROWSIN_DIR`

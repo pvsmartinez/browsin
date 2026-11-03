@@ -16,6 +16,10 @@ export const resolveTarget = (input) => {
   if (/^(https?|file|data|about|chrome):/.test(input)) return input;
   const asPath = resolvePath(input);
   if (existsSync(asPath)) return `file://${asPath}`;
+  // `page.html#section` / `page.html?x=1`: the file exists, the suffix is the
+  // URL's, not part of the name.
+  const suffixed = /^([^#?]+)([#?].*)$/.exec(input);
+  if (suffixed && existsSync(resolvePath(suffixed[1]))) return `file://${resolvePath(suffixed[1])}${suffixed[2]}`;
   if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(\/|$)/.test(input)) return `http://${input}`;
   if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?/.test(input)) return `http://${input}`;
   // A path-shaped argument that does not exist is a typo or a wrong cwd, never
@@ -25,6 +29,13 @@ export const resolveTarget = (input) => {
   }
   return `https://${input}`;
 };
+
+/**
+ * A `--name` is a file name inside the session's shots/, never a path: a
+ * route like `experiments/detail` used as a name must not need a directory
+ * that does not exist, nor climb out with `..`.
+ */
+const shotName = (name, fallback) => String(name || fallback).replace(/[^\w.-]+/g, '-').replace(/^[-.]+/, '') || fallback;
 
 /** PNG dimensions straight from the IHDR chunk — no image library needed. */
 const pngSize = (buf) => ({ w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) });
@@ -61,6 +72,14 @@ const waitForExpression = async (cdp, expr, timeout) => {
   }
   return false;
 };
+
+/**
+ * `--wait` after an action (reload, click, key): a condition that never held
+ * must say so — silence read as "the flow worked" (the recipe that confirms a
+ * login with `key Enter --wait 'location.pathname !== "/"'`).
+ */
+const waitNotes = async (cdp, expr, timeout) =>
+  (await waitForExpression(cdp, expr, timeout)) ? [] : [`note  --wait never became true: ${expr}`];
 
 /**
  * Resolves a selector through the in-page helper, so every command inherits
@@ -117,28 +136,120 @@ const objectIdFor = async (cdp, sel, nth = 0) => {
  * are fetched before any page script exists.
  */
 const recordNetwork = async (cdp) => {
-  const events = [];
+  // One record per request, keyed by requestId, so a failure keeps the URL it
+  // was for (loadingFailed carries none) and a request still in flight is
+  // visible. Events for a requestId this recording never saw start (the
+  // previous page's requests, canceled by the navigation) are not ours.
+  const reqs = new Map();
+  let committed = false;
+  const mainFrame = await cdp.send('Page.getFrameTree').then((t) => t.frameTree.frame.id).catch(() => null);
   await cdp.send('Network.enable', { maxTotalBufferSize: 1_000_000 });
   const off = cdp.on((m) => {
-    if (m.method === 'Network.responseReceived') {
-      const { response, type } = m.params;
-      events.push({ status: response.status, type, url: response.url, fromCache: response.fromDiskCache });
-    } else if (m.method === 'Network.loadingFailed') {
-      events.push({ status: 0, type: m.params.type, url: null, error: m.params.errorText });
+    const p = m.params;
+    if (m.method === 'Runtime.executionContextsCleared' && !committed) {
+      // The navigation committed: what the previous document requested in
+      // the meantime (a poll, a late call, an iframe it reloaded) is its own,
+      // not this page's. The main frame's documents (the navigation and its
+      // redirects) stay.
+      committed = true;
+      for (const [id, r] of reqs) if (!(r.type === 'Document' && r.frameId === mainFrame)) reqs.delete(id);
+      return;
     }
+    if (m.method === 'Network.requestWillBeSent') {
+      // A redirect reuses the requestId: the same request, now at the new URL.
+      reqs.set(p.requestId, { method: p.request.method, url: p.request.url, type: p.type || 'Other', frameId: p.frameId,
+        status: null, error: null, canceled: false, done: false });
+      return;
+    }
+    const r = p && reqs.get(p.requestId);
+    if (!r) return;
+    if (m.method === 'Network.responseReceived') { r.status = p.response.status; r.type = p.type || r.type; }
+    else if (m.method === 'Network.loadingFinished') r.done = true;
+    else if (m.method === 'Network.loadingFailed') { r.done = true; r.error = p.errorText; r.canceled = !!p.canceled; }
   });
-  return () => { off(); return events; };
+  const stop = () => { off(); return [...reqs.values()]; };
+  // EventSource and WebSocket stay open by design; they are never "in flight".
+  stop.inflight = () => [...reqs.values()].filter((r) => !r.done && r.type !== 'EventSource' && r.type !== 'WebSocket');
+  return stop;
 };
 
-const renderNetwork = (events, { all = false } = {}) => {
-  const bad = events.filter((e) => e.status === 0 || e.status >= 400);
+/**
+ * A request canceled before any response (an AbortController, a navigation
+ * away, a lazy image dropped) is the page's own decision, not a failure: React
+ * StrictMode aborts every first fetch of an effect in dev, and a gate that
+ * counted those would never pass. A response with an HTTP error status still
+ * counts when the page then aborts reading its body: the server did answer 4xx/5xx.
+ */
+const requestFailed = (r) => (r.status !== null && r.status >= 400) || (!!r.error && !r.canceled);
+
+/** A console argument (a CDP RemoteObject) as the text the console would show. */
+const remoteText = (o) => {
+  if (o.type === 'string') return o.value;
+  if (o.type === 'undefined') return 'undefined';
+  if ('value' in o) return typeof o.value === 'object' ? JSON.stringify(o.value) : String(o.value);
+  return o.unserializableValue || o.description || o.type;
+};
+
+/**
+ * Console errors and uncaught exceptions from the protocol, for `check`. The
+ * in-page buffer lives in the document, so a page that logs and then
+ * redirects (`location.replace`, an auth bounce) took its errors with it
+ * before anyone drained it; this stream outlives the document. Messages older
+ * than the recording are dropped: `Runtime.enable` (in connect) replays the
+ * console history of the page the previous command left — today that replay
+ * lands before this subscription, and the timestamp keeps it out if the order
+ * ever changes. An exception later handled
+ * (`exceptionRevoked`: a rejection caught late) is not an error.
+ */
+const recordConsole = (cdp) => {
+  const t0 = Date.now();
+  let entries = [];
+  const byId = new Map();
+  let committed = false;
+  const off = cdp.on((m) => {
+    const p = m.params;
+    if (m.method === 'Runtime.executionContextsCleared') {
+      // The first commit replaces the previous route's document: what it
+      // logged while the navigation was pending is not this page's. Later
+      // ones (a redirect of this page) keep everything — that is the case
+      // this stream exists for.
+      if (!committed) { committed = true; entries = []; }
+      return;
+    }
+    if (m.method === 'Runtime.consoleAPICalled') {
+      if ((p.type !== 'error' && p.type !== 'assert') || p.timestamp < t0) return;
+      entries.push({ kind: 'error', msg: (p.args || []).map(remoteText).join(' ').slice(0, 600) });
+    } else if (m.method === 'Runtime.exceptionThrown') {
+      if (p.timestamp < t0) return;
+      const d = p.exceptionDetails;
+      const what = (d.exception?.description || '').split('\n')[0];
+      const where = d.url ? ` @ ${d.url}:${(d.lineNumber ?? 0) + 1}` : '';
+      const e = { kind: /in promise/.test(d.text || '') ? 'rejection' : 'exception',
+        msg: `${d.text || 'Uncaught'}${what ? ` ${what}` : ''}${where}`.slice(0, 600) };
+      byId.set(d.exceptionId, e);
+      entries.push(e);
+    } else if (m.method === 'Runtime.exceptionRevoked') {
+      const e = byId.get(p.exceptionId);
+      if (e) e.revoked = true;
+    }
+  });
+  return () => { off(); return entries.filter((e) => !e.revoked); };
+};
+
+const requestLabel = (r) => {
+  if (r.status !== null && r.status >= 400) return String(r.status);
+  if (r.error) return r.canceled ? 'canceled' : r.error;
+  return r.status !== null ? String(r.status) : 'pending';
+};
+
+const renderNetwork = (records, { all = false } = {}) => {
+  const line = (r) => `  [${requestLabel(r)}] ${r.type} ${r.url}`;
   if (!all) {
-    if (!bad.length) return [`net   ${events.length} request(s), all ok`];
-    return [`net   ${bad.length} of ${events.length} request(s) failed:`,
-      ...bad.map((e) => `  [${e.status || e.error}] ${e.type} ${e.url || ''}`.trimEnd())];
+    const bad = records.filter(requestFailed);
+    if (!bad.length) return [`net   ${records.length} request(s), all ok`];
+    return [`net   ${bad.length} of ${records.length} request(s) failed:`, ...bad.map(line)];
   }
-  return [`net   ${events.length} request(s):`,
-    ...events.map((e) => `  [${e.status || e.error}] ${e.type} ${e.url || ''}`.trimEnd())];
+  return [`net   ${records.length} request(s):`, ...records.map(line)];
 };
 
 /**
@@ -166,11 +277,17 @@ const navigate = async (cdp, url, { waitExpr, timeout = 15000, noWait = false } 
   const notes = [];
   const loaded = cdp.once('Page.loadEventFired', { timeout }).catch(() => null);
   const nav = await cdp.send('Page.navigate', { url });
-  if (nav.errorText) throw new Error(`${url} — ${nav.errorText}`);
-  if ((await loaded) === null) notes.push('load event never fired (timeout)');
+  if (nav.errorText) throw Object.assign(new Error(`${url} — ${nav.errorText}`), { navError: nav.errorText });
+  // No loaderId = a same-document navigation (only the #fragment changed):
+  // there is no load event to wait for, and waiting cost the full timeout.
+  if (nav.loaderId && (await loaded) === null) notes.push('load event never fired (timeout)');
   await waitForExpression(cdp, 'document.readyState === "complete"', 3000);
+  // `notes.waitOk` carries the --wait outcome to the callers that judge it
+  // (check --fail-on); null when there was no --wait.
+  notes.waitOk = null;
   if (waitExpr) {
-    if (!(await waitForExpression(cdp, waitExpr, timeout))) notes.push(`--wait never became true: ${waitExpr}`);
+    notes.waitOk = await waitForExpression(cdp, waitExpr, timeout);
+    if (!notes.waitOk) notes.push(`--wait never became true: ${waitExpr}`);
   } else if (!noWait && !(await waitForMount(cdp, { timeout: Math.min(timeout, 1500) }))) {
     notes.push('body still empty after waiting for mount — pass --wait with an app-specific condition');
   }
@@ -207,16 +324,158 @@ export const cmdOpen = async (args) => {
     ...renderNetwork(net, { all: !!args.net }), ...logSummary(logs)].join('\n');
 };
 
-/** One call that answers "is the page fine?" — navigate, problems, pixels. */
+/* --------------------------------------------------------------- QA gate */
+
+/** What `check --fail-on` can fail on; `errors` is all of them. */
+const FAIL_ON = ['exceptions', 'console', 'network', 'wait'];
+const EXCEPTION_KINDS = new Set(['exception', 'rejection']);
+
+const parseFailOn = (v) => {
+  if (v === undefined) return null;
+  if (v === true) return [...FAIL_ON];
+  const out = new Set();
+  for (const w of String(v).split(',').map((s) => s.trim()).filter(Boolean)) {
+    if (w === 'errors') FAIL_ON.forEach((c) => out.add(c));
+    else if (FAIL_ON.includes(w)) out.add(w);
+    else throw new Error(`--fail-on: unknown category "${w}" (errors, ${FAIL_ON.join(', ')})`);
+  }
+  if (!out.size) throw new Error(`--fail-on needs a category (errors, ${FAIL_ON.join(', ')})`);
+  return [...out];
+};
+
+const parseIgnore = (v) => [].concat(v ?? []).map((p) => {
+  if (typeof p !== 'string' || !p) throw new Error(`--ignore needs a regex, e.g. --ignore 'favicon\\.ico$'`);
+  try { return new RegExp(p); } catch (err) { throw new Error(`--ignore: invalid regex ${p} (${err.message})`); }
+});
+
+const parseMs = (v, flag) => {
+  const n = Number(v);
+  if (v === true || v === '' || !Number.isFinite(n) || n < 0) throw new Error(`${flag} must be a number of milliseconds (>= 0)`);
+  return n;
+};
+
+const isInflight = (r) => !r.done && r.type !== 'EventSource' && r.type !== 'WebSocket';
+
+/**
+ * The settle window: errors that arrive after the mount (an API call that
+ * 500s, the render that throws on its response) are what a gate exists to
+ * catch. Watch for `settleMs`, then until no request is in flight (bounded by
+ * `timeout`), draining the page's log buffer on every tick so a document
+ * replaced mid-window (a redirect) does not take its errors with it.
+ */
+const observe = async (cdp, stopNet, logs, { settleMs, timeout, ignore = [] }) => {
+  // An ignored request (a stream the gate was told about) is not waited for.
+  const waitingOn = () => stopNet.inflight().filter((r) => !ignore.some((re) => re.test(r.url)));
+  const t0 = Date.now();
+  const minEnd = t0 + settleMs;
+  const hardEnd = minEnd + timeout;
+  let waitedForNet = false;
+  for (;;) {
+    logs.push(...await drainLogs(cdp));
+    const now = Date.now();
+    if (now >= hardEnd || (now >= minEnd && !waitingOn().length)) break;
+    if (now >= minEnd) waitedForNet = true;
+    await sleep(100);
+  }
+  // A response that just landed renders on the next frames; let it throw now.
+  if (waitedForNet) { await settle(cdp); logs.push(...await drainLogs(cdp)); }
+  return Date.now() - t0;
+};
+
+/**
+ * The verdict, as data. Network problems come from the protocol (status and
+ * URL of every request, including the document and scripts the in-page
+ * collector never sees), so the collector's own http/neterr/resource entries
+ * are not counted twice. `--ignore` matches a request URL, or the message of
+ * an exception or console error.
+ */
+export const gateVerdict = ({ logs, net, waitOk = null, navError = null, failOn = null, ignore = [] }) => {
+  const ignored = { exceptions: 0, consoleErrors: 0, failedRequests: 0, pending: 0 };
+  const keep = (bucket, text) => {
+    if (!ignore.some((re) => re.test(text))) return true;
+    ignored[bucket]++;
+    return false;
+  };
+  const exceptions = logs.filter((l) => EXCEPTION_KINDS.has(l.kind))
+    .map((l) => ({ kind: l.kind, message: l.msg })).filter((e) => keep('exceptions', e.message));
+  const consoleErrors = logs.filter((l) => l.kind === 'error')
+    .map((l) => ({ message: l.msg })).filter((e) => keep('consoleErrors', e.message));
+  const req = (r) => ({ method: r.method, url: r.url, type: r.type, status: r.status, error: r.error });
+  const failedRequests = net.filter(requestFailed).filter((r) => keep('failedRequests', r.url)).map(req);
+  const pending = net.filter(isInflight).filter((r) => keep('pending', r.url))
+    .map(({ method, url, type }) => ({ method, url, type }));
+  const counted = failOn || FAIL_ON;
+  const counts = { exceptions: exceptions.length, console: consoleErrors.length,
+    network: failedRequests.length, wait: waitOk === false ? 1 : 0 };
+  const failing = counted.filter((c) => counts[c] > 0);
+  return { ok: !navError && !failing.length, failing, counted, counts,
+    exceptions, consoleErrors, failedRequests, pending, ignored };
+};
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+const gateLine = (v, navError) => {
+  const ign = Object.values(v.ignored).reduce((a, b) => a + b, 0);
+  const tail = ign ? ` (${ign} ignored)` : '';
+  if (v.ok) return `gate  ok${tail}`;
+  const parts = [];
+  if (navError) parts.push(`navigation failed: ${navError}`);
+  const say = { exceptions: plural(v.counts.exceptions, 'exception'),
+    console: plural(v.counts.console, 'console error'),
+    network: plural(v.counts.network, 'failed request'), wait: '--wait never true' };
+  for (const c of v.failing) parts.push(say[c]);
+  return `gate  FAIL — ${parts.join(' · ')}${tail}`;
+};
+
+/**
+ * One call that answers "is the page fine?" — navigate, problems, pixels.
+ * With `--fail-on`, it is also a QA gate: exit 2 when the page has problems in
+ * those categories (0 when clean, 1 when browsin itself could not run), and
+ * `--json` prints the verdict for a machine.
+ */
 export const cmdCheck = async (args) => {
   const url = resolveTarget(args._[0]);
   if (!url) throw new Error('usage: browsin check <url|file>');
+  const failOn = parseFailOn(args.failOn);
+  const ignore = parseIgnore(args.ignore);
+  const timeout = args.timeout === undefined ? 15000 : parseMs(args.timeout, '--timeout');
+  const settleMs = args.settle !== undefined ? parseMs(args.settle, '--settle') : (failOn ? 1000 : 0);
+  const json = !!args.json;
+  const t0 = Date.now();
+
   const { cdp, viewport, dialogs } = await connect();
+  // What the previous page left undrained is not this route's problem.
+  await drainLogs(cdp);
+  const stopConsole = recordConsole(cdp);
   const stopNet = await recordNetwork(cdp);
-  const notes = await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000), noWait: !!args['no-wait'] });
+  let notes;
+  try {
+    notes = await navigate(cdp, url, { waitExpr: args.wait, timeout, noWait: !!args['no-wait'] });
+  } catch (err) {
+    // Unreachable page: without --fail-on it stays an error (exit 1); as a gate
+    // it is the verdict — the route did not load.
+    if (!failOn || !err.navError) throw err;
+    stopNet();
+    stopConsole();
+    cdp.close();
+    const v = gateVerdict({ logs: [], net: [], navError: err.navError, failOn, ignore });
+    if (json) {
+      return { out: JSON.stringify({ ok: false, target: url, url: null, title: null, failOn: v.counted,
+        wait: args.wait ? { expr: args.wait, ok: null } : null, error: err.navError,
+        exceptions: [], consoleErrors: [], failedRequests: [], pending: [], ignored: v.ignored,
+        requests: 0, warnings: [], notes: [], dialogs, timing: { totalMs: Date.now() - t0, settleMs: 0 }, shot: null },
+      null, 2), code: 2 };
+    }
+    return { out: [`check ${url}`, `error ${err.navError}`, gateLine(v, err.navError)].join('\n'), code: 2 };
+  }
+  const pageLogs = [];
+  const settledMs = settleMs ? await observe(cdp, stopNet, pageLogs, { settleMs, timeout, ignore }) : 0;
   const head = await pageHead(cdp);
-  const logs = await drainLogs(cdp);
+  pageLogs.push(...await drainLogs(cdp));
   const net = stopNet();
+  // Exceptions and console errors from the protocol stream (it survives a
+  // redirect); the rest (warn, resource, the collector's http/neterr) from the page.
+  const logs = [...stopConsole(), ...pageLogs.filter((l) => !EXCEPTION_KINDS.has(l.kind) && l.kind !== 'error')];
   const stats = JSON.parse(await cdp.eval(`JSON.stringify({
     nodes: document.querySelectorAll('*').length,
     overflowX: document.documentElement.scrollWidth > innerWidth + 1,
@@ -226,17 +485,40 @@ export const cmdCheck = async (args) => {
   await afterAction(cdp);
   cdp.close();
 
+  const v = gateVerdict({ logs, net, waitOk: notes.waitOk, failOn, ignore });
+  const code = failOn && !v.ok ? 2 : 0;
+  const warnings = [];
+  if (stats.emptyBody) warnings.push('body renders no text');
+  if (stats.overflowX) warnings.push('horizontal overflow at this viewport');
+
+  let shot = null;
+  let snapText = null;
+  if (!args['no-snap']) {
+    shot = join(SHOTS, `${shotName(args.name, 'check')}.png`);
+    snapText = await cmdSnap({ _: [], clip: args.clip, full: args.full, o: shot, dpr: args.dpr });
+  }
+
+  if (json) {
+    return { out: JSON.stringify({ ok: v.ok, target: url, url: head.url, title: head.title, failOn: v.counted,
+      wait: args.wait ? { expr: args.wait, ok: notes.waitOk } : null, error: null,
+      exceptions: v.exceptions, consoleErrors: v.consoleErrors, failedRequests: v.failedRequests,
+      pending: v.pending, ignored: v.ignored, requests: net.length, warnings, notes: [...notes], dialogs,
+      timing: { totalMs: Date.now() - t0, settleMs: settledMs }, shot }, null, 2), code };
+  }
+
   const out = [`check ${head.url}`, `title ${head.title || '(untitled)'}`,
     `view  ${viewport.width}x${viewport.height} @${viewport.dpr}x · ${stats.nodes} nodes · page ${stats.scrollHeight}px tall`,
     ...notes.map((n) => `note  ${n}`), ...dialogLines(dialogs)];
   if (stats.emptyBody) out.push(`warn  body renders no text — app may not have mounted; retry with --wait, e.g. browsin check <url> --wait 'document.querySelector("#root")?.children.length > 0'`);
   if (stats.overflowX) out.push('warn  horizontal overflow at this viewport');
   out.push(...renderNetwork(net, { all: !!args.net }), ...logSummary(logs));
-
-  if (!args['no-snap']) {
-    out.push('', await cmdSnap({ _: [], clip: args.clip, full: args.full, name: args.name || 'check', dpr: args.dpr }));
+  if (settleMs && v.pending.length) {
+    out.push(`note  ${plural(v.pending.length, 'request')} still in flight after settling:`,
+      ...v.pending.slice(0, 5).map((r) => `  [pending] ${r.type} ${r.url}`));
   }
-  return out.join('\n');
+  if (failOn) out.push(gateLine(v, null));
+  if (snapText) out.push('', snapText);
+  return failOn ? { out: out.join('\n'), code } : out.join('\n');
 };
 
 export const cmdReload = async (args) => {
@@ -246,14 +528,14 @@ export const cmdReload = async (args) => {
   await cdp.send('Page.reload', { ignoreCache: !!args.hard });
   await loaded;
   await waitForExpression(cdp, 'document.readyState === "complete"', 3000);
-  if (args.wait) await waitForExpression(cdp, args.wait, Number(args.timeout || 15000));
+  const waited = args.wait ? await waitNotes(cdp, args.wait, Number(args.timeout || 15000)) : [];
   await settle(cdp);
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
   const net = stopNet();
   await afterAction(cdp);
   cdp.close();
-  return [`reload ${head.url}${args.hard ? ' (cache bypassed)' : ''}`, ...dialogLines(dialogs),
+  return [`reload ${head.url}${args.hard ? ' (cache bypassed)' : ''}`, ...waited, ...dialogLines(dialogs),
     ...renderNetwork(net, { all: !!args.net }), ...logSummary(logs)].join('\n');
 };
 
@@ -459,7 +741,7 @@ export const cmdSnap = async (args) => {
   const buf = Buffer.from(shot.data, 'base64');
   ensureDirs();
   const ext = args.jpeg ? 'jpg' : 'png';
-  const out = args.o || args.out || join(SHOTS, `${args.name || 'shot'}.${ext}`);
+  const out = args.o || args.out || join(SHOTS, `${shotName(args.name, 'shot')}.${ext}`);
   writeFileSync(out, buf);
   cdp.close();
 
@@ -509,7 +791,7 @@ export const cmdPdf = async (args) => {
   });
   const buf = Buffer.from(res.data, 'base64');
   ensureDirs();
-  const out = args.o || args.out || join(SHOTS, `${args.name || 'page'}.pdf`);
+  const out = args.o || args.out || join(SHOTS, `${shotName(args.name, 'page')}.pdf`);
   writeFileSync(out, buf);
   const logs = await drainLogs(cdp);
   cdp.close();
@@ -536,15 +818,14 @@ export const cmdClick = async (args) => {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...base });
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base });
 
-  if (args.wait) await waitForExpression(cdp, args.wait, Number(args.timeout || 5000));
-  else await sleep(250);
+  const waited = args.wait ? await waitNotes(cdp, args.wait, Number(args.timeout || 5000)) : (await sleep(250), []);
   await settle(cdp);
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
   await afterAction(cdp);
   cdp.close();
   return [`click ${sel} (${box.tag}) at ${Math.round(box.x)},${Math.round(box.y)}`, `url   ${head.url}`,
-    ...dialogLines(dialogs), ...renderLogs(logs)].join('\n');
+    ...waited, ...dialogLines(dialogs), ...renderLogs(logs)].join('\n');
 };
 
 export const cmdHover = async (args) => {
@@ -624,15 +905,14 @@ export const cmdKey = async (args) => {
     await cdp.eval(`(() => { const q = window.__bq(${JSON.stringify(args.on)}); if (q.el) q.el.focus(); })()`);
   }
   await pressKey(cdp, key, args.mod);
-  if (args.wait) await waitForExpression(cdp, args.wait, Number(args.timeout || 5000));
-  else await sleep(200);
+  const waited = args.wait ? await waitNotes(cdp, args.wait, Number(args.timeout || 5000)) : (await sleep(200), []);
   await settle(cdp);
   const head = await pageHead(cdp);
   const logs = await drainLogs(cdp);
   await afterAction(cdp);
   cdp.close();
   return [`key   ${args.mod ? args.mod + '+' : ''}${key}`, `url   ${head.url}`,
-    ...dialogLines(dialogs), ...renderLogs(logs)].join('\n');
+    ...waited, ...dialogLines(dialogs), ...renderLogs(logs)].join('\n');
 };
 
 export const cmdSelect = async (args) => {

@@ -40,6 +40,7 @@ the question is aesthetic** (spacing, colour, alignment, "does it look bad?").
 ```bash
 # navigate and diagnose
 browsin check <url|file>         # navigate + problems + network + screenshot, one call
+browsin check <url> --wait '<js>' --fail-on errors --json   # QA gate: exit 2 on problems
 browsin open <url|file> · browsin reload [--hard] · browsin back
 browsin logs [--all]             # console, exceptions, rejections, 4xx/5xx, failed resources
 browsin network [url]            # every request with its status, at protocol level
@@ -163,6 +164,38 @@ the output. Prefer it when the deliverable is an animated demo. Do not read each
 into the conversation; check duration and frames with `ffprobe`, and ask for a specific frame's pixels
 only when there is an aesthetic doubt. `record stop` needs `ffmpeg`; `record cancel` and `down` discard
 an active recording.
+
+## QA gate: `check --fail-on`
+
+For a `make qa` or any pipeline that walks routes and needs a machine verdict:
+
+```bash
+BROWSIN_SESSION=qa browsin check localhost:5173/experiments \
+  --wait 'document.querySelector("#root")?.children.length > 0' \
+  --fail-on errors --json --name experiments --ignore 'favicon\.ico$'
+```
+
+- **Exit:** `0` clean · `2` the page failed the gate (or never loaded) · `1` browsin itself could not
+  run (bad flag, no browser). Without `--fail-on`, `check` exits `0` as always.
+- **`--fail-on`** `errors` (all) or a comma list of `exceptions` (uncaught errors and unhandled
+  rejections), `console` (`console.error` and a failed `console.assert`), `network` (HTTP ≥ 400 or a network failure, with URL and
+  status; a request **canceled before its response** — AbortController, React StrictMode — does not
+  count; a 4xx/5xx response counts even if the page then aborts its body), `wait`
+  (`--wait` never became true).
+- **`--settle ms`** (default `1000` with `--fail-on`, else `0`): after the mount, watch that long, then
+  until the requests in flight finish (bounded by `--timeout`). That is what catches an API that 500s
+  after the mount and the render that throws on it. Still in flight at the end (a stream, a long
+  poll) goes to `pending`, which does not fail the gate.
+- **`--ignore REGEX`** (repeatable) drops a request whose URL matches, or an exception/console error
+  whose message matches (and the settle does not wait for an ignored request); the dropped counts are
+  in `ignored`.
+- **`--json`** prints one object: `ok`, `target`, `url`, `title`, `failOn`, `wait {expr, ok}`, `error`
+  (navigation failure such as `net::ERR_CONNECTION_REFUSED`, else `null`), `exceptions[{kind,
+  message}]`, `consoleErrors[{message}]`, `failedRequests[{method, url, type, status, error}]`,
+  `pending[{method, url, type}]`, `ignored{…}`, `requests`, `warnings`, `notes`, `dialogs`,
+  `timing{totalMs, settleMs}`, `shot`. On exit `1`, stdout has `{"ok": false, "error": "…", "fatal": true}`.
+- Pass `--name <route>` per route (else every shot overwrites `check.png`) and give the gate its own
+  `BROWSIN_SESSION`, with a `browsin down` at the end.
 
 ## Traps
 

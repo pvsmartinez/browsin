@@ -43,7 +43,7 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   `pageTarget`; sem pin, segue a primeira aba. `gc` também varre bases irmãos `browsin*` (dirs
   por-run do kit, testes) e mata browser órfão sem state — sem apagar arquivos alheios
   (`BROWSIN_ORPHAN_GRACE_S` dá a carência, default 300s).
-- **Rode `test/suite.sh` (147 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
+- **Rode `test/suite.sh` (~190 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
   buracos que já morderam: escala dobrada de `--dpr`, `confirm()` que trava a página, offset de
   coordenada dentro de iframe, download de blob, PDF paginado, e sessões concorrentes (isolamento,
   `gc`, órfão, cap, `down --all`).
@@ -53,6 +53,12 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   entre passos corromperia os casos que preparam órfão/ociosa à mão — a seção própria do janitor
   reativa por caso). Não introduza caso que dependa de arquivo fora do repo — ele passa só na
   máquina de quem escreveu.
+- **`check --fail-on` é contrato de máquina** (o `make qa` do amp-maestro depende dele): códigos
+  de saída 0/2/1, a forma do `--json` e as categorias estão no README e na skill. Mudou um, mudou o
+  contrato — campo novo pode, renomear/remover não. O veredito vem do protocolo, não do coletor da
+  página: rede de `recordNetwork` (um registro por requestId; request cancelada não é falha),
+  exceção e `console.error` de `recordConsole` (o buffer da página morre com o documento — um
+  redirect levava os erros junto).
 - Comando ou flag novo: atualize `README.md`, `skills/browsin/SKILL.md` **e** a suíte. Ferramenta
   sem skill em dia não é chamada por ninguém.
 - Os binários são do browsin: `~/Library/Caches/browsin/{headless-shell,chromium}` (ou
