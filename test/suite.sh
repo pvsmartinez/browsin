@@ -484,8 +484,57 @@ sleep 0.3
 t "tabs lista as abas"        'aba\(s\)'   browsin tabs
 t "tabs use fixa uma aba"     'usando 1'   browsin tabs use 1
 t "tabs auto descarta o pin"  'auto'       browsin tabs auto
+# Duas abas extras: um close não pode levar a última página (no headless shell isso
+# derruba o browser) e o caso de confirmação precisa de outra aba para fechar.
+browsin js "void window.open('file://$SP/tall.html','browsin-suite-tab2')" >/dev/null
+sleep 0.3
 t "tabs close fecha uma aba"  'fechou 0'   browsin tabs close 0
+# `/json/close/<id>` responde 200 com texto puro (`Target is closing`): parsear
+# como JSON fazia todo close real imprimir "sem confirmação do browser".
+tnot "tabs close confirma (200 texto, não 'sem confirmação')" 'sem confirmação' browsin tabs close 0
 browsin open $SP/basic.html >/dev/null
+
+echo "— resiliência da fronteira CDP —"
+# As fixtures em test/resilience.mjs simulam browser mudo/morto em sockets locais:
+# sem deadline, `send` não rejeitava nunca (nem no close), e o comando ficava
+# pendurado segurando o lock da sessão.
+tx "deadlines e fechamento do CDP (sem browser)" 0 'RESULTADO: [0-9]+ ok, 0 falhas' node "$HERE/resilience.mjs"
+
+# Renderer travado num laço (fixture spin.html): o browser responde em
+# /json/version e /json/list, mas nenhum round trip de protocolo volta. O
+# comando tem que falhar rápido e não-zero, não esperar para sempre.
+browsin open "$SP/spin.html?delay=1200&ms=5000" --no-wait >/dev/null 2>&1
+sleep 1.8
+SPIN_T0=$(date +%s)
+SPIN_OUT=$(BROWSIN_CDP_TIMEOUT_MS=800 browsin js '1' 2>&1); SPIN_CODE=$?
+SPIN_MS=$(( ($(date +%s) - SPIN_T0) * 1000 ))
+if [ "$SPIN_CODE" = 1 ] && echo "$SPIN_OUT" | grep -qE 'timed out after 800ms'; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "renderer travado: deadline vira erro (exit 1)"
+else FAIL=$((FAIL+1)); FAILED+=("renderer travado: deadline vira erro"); printf '  FAIL renderer travado: exit %s, veio: %s\n' "$SPIN_CODE" "$(echo "$SPIN_OUT" | head -2 | tr '\n' '|')"; fi
+if [ "$SPIN_MS" -lt 15000 ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "renderer travado: falha limitada (${SPIN_MS}ms)"
+else FAIL=$((FAIL+1)); FAILED+=("renderer travado: falha limitada"); printf '  FAIL renderer travado levou %sms\n' "$SPIN_MS"; fi
+# Lock liberado e browser intacto: o comando seguinte anda sozinho depois do laço.
+SPIN_RECOVER=0
+for _ in $(seq 1 30); do browsin js 'document.title' >/dev/null 2>&1 && { SPIN_RECOVER=1; break; }; sleep 0.4; done
+if [ "$SPIN_RECOVER" = 1 ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "comando seguinte anda (lock liberado, browser vivo)"
+else FAIL=$((FAIL+1)); FAILED+=("comando seguinte anda após timeout"); printf '  FAIL sessão ficou presa após o timeout\n'; fi
+
+# Browser morto no meio de um comando: o pendente rejeita e o CLI sai não-zero.
+LOCKED_OUT="$(mktemp /tmp/browsin-kill.XXXXXX)"
+browsin open $SP/basic.html >/dev/null 2>&1
+( browsin js 'new Promise(r => setTimeout(r, 5000))' >"$LOCKED_OUT" 2>&1; echo $? >"$LOCKED_OUT.code" ) &
+KILLW=$!
+sleep 1.2
+BPID=$(node -p "(JSON.parse(require('fs').readFileSync(process.env.BROWSIN_DIR + '/state.json','utf8')).pid) || ''" 2>/dev/null)
+kill -9 "$BPID" 2>/dev/null
+wait "$KILLW"
+KILL_CODE=$(cat "$LOCKED_OUT.code" 2>/dev/null)
+if [ "$KILL_CODE" = 1 ] && grep -qE 'socket closed|socket error|closed before' "$LOCKED_OUT"; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "browser morto no meio: pendente rejeita (exit 1)"
+else FAIL=$((FAIL+1)); FAILED+=("browser morto no meio: pendente rejeita"); printf '  FAIL exit %s: %s\n' "$KILL_CODE" "$(head -2 "$LOCKED_OUT" | tr '\n' '|')"; fi
+rm -f "$LOCKED_OUT" "$LOCKED_OUT.code"
+t "próximo comando sobe outro browser" 'Teste browsin' browsin open $SP/basic.html
 
 echo "— down --all —"
 sess suite-a open $SP/basic.html >/dev/null 2>&1

@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
-import { CDP } from './cdp.mjs';
+import { CDP, cdpHttp } from './cdp.mjs';
 import { COLLECTOR } from './collector.mjs';
 import { QUERY } from './query.mjs';
 import { ensureDirs, findBinary, readState, writeState, PORT, PROFILE, STATE_FILE, SESSION } from './paths.mjs';
@@ -165,7 +165,9 @@ export const launch = async ({ headed = false } = {}) => {
  * itself. `/json/new` only runs when the browser has no page at all.
  */
 const pageTarget = async (port) => {
-  const list = await (await fetch(endpoint(port, '/json/list'))).json();
+  // Deadline on both calls: fetch alone parks the command forever on a browser
+  // that accepts the connection and never answers (see `cdpHttp`).
+  const list = await cdpHttp(port, '/json/list');
   const pages = list.filter((t) => t.type === 'page' && !t.url.startsWith('devtools://'));
   const pinned = readState().targetId;
   if (pinned) {
@@ -174,8 +176,7 @@ const pageTarget = async (port) => {
     writeState({ targetId: null }); // the pinned tab is gone
   }
   if (pages.length) return pages[0];
-  const created = await (await fetch(endpoint(port, '/json/new?about=blank'), { method: 'PUT' })).json();
-  return created;
+  return cdpHttp(port, '/json/new?about=blank', { method: 'PUT' });
 };
 
 /**

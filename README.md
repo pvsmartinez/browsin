@@ -293,6 +293,7 @@ subo é `BROWSIN_ORPHAN_GRACE_S` (default 300s).
 | `BROWSIN_PORT` | porta fixa (default: 9377 + hash da sessão) |
 | `BROWSIN_TTL_MIN` · `BROWSIN_MAX_SESSIONS` | coleta: ociosidade e teto de sessões vivas |
 | `BROWSIN_JANITOR` (=off desliga) · `BROWSIN_JANITOR_INTERVAL_S` | zelador pós-harness: desliga e intervalo (default 600s) |
+| `BROWSIN_CDP_TIMEOUT_MS` | deadline default de **cada mensagem CDP no WebSocket** (60000; `0` espera para sempre). É o único tier que a variável move: não toca `/json/*` de controle (5s; `tabs close` pede 2s), `snap`/`pdf` (180s), o handshake do WebSocket (10s) nem a espera de evento (`once`, 15s ou o `--timeout` do comando). Estourou, o comando sai 1 em vez de pendurar e segurar o lock da sessão |
 
 ## Três decisões de projeto
 
@@ -354,6 +355,17 @@ antes de mexer em qualquer coisa.
 - **`viewport --dpr` ≠ `snap --dpr`.** O primeiro é o `devicePixelRatio` que a *página* vê (media
   query, `srcset`); o segundo é a densidade do arquivo. O CDP multiplica os dois, então o `snap`
   divide de volta — pedir 1x num viewport @2x não pode render imagem 4x.
+- **A fronteira com o Chrome tem prazo.** Página travada num laço de JS, renderer morto ou
+  browser que aceita a conexão e não responde são estados que já existiram: sem deadline o `send`
+  ficava pendente para sempre, o comando nunca saía e o lock da sessão (liberado no `exit`) ia com
+  ele — a sessão inteira parava até o lock vencer. Agora cada **mensagem** CDP tem 60s por default,
+  e só esse tier é ajustável (`BROWSIN_CDP_TIMEOUT_MS`, `0` desliga): os outros são fixos e
+  escolhidos por custo — `snap`/`pdf` 180s (rasterizam página grande de verdade), `/json/*` de
+  controle 5s (`tabs close` pede 2s), handshake do WebSocket 10s, e `once` espera o `--timeout`
+  (15s default) porque é espera de fluxo, não de mensagem. Socket fechado no meio rejeita o que
+  estava em voo com `CDP socket closed before <método> answered` — mensagens e eventos (`once`)
+  pendentes. O comando sai não-zero e o próximo já anda no mesmo browser. `--timeout` continua mandando no que é espera de *fluxo* (mount, `--wait`,
+  requests em voo); o deadline do CDP é o piso de cada mensagem, não o teto da operação.
 - **`snap` do viewport não reflui a página.** O print padrão (a área visível) captura sem
   `captureBeyondViewport`, então não dispara `resize` — apps que redesenham no resize (canvas,
   Blockly) ficam intactos. `--clip`/`--full` usam `captureBeyondViewport` para renderizar o que

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Teste browsin spin</title>
+<!--
+  Fixture for the CDP resilience cases: a renderer that blocks itself in a loop,
+  so every protocol round trip hangs while the browser process is still alive
+  and answering `/json/version` and `/json/list`. That is the exact shape of the
+  bug the deadline exists for: the command must fail (exit 1, bounded) instead
+  of pending forever and holding the session lock.
+
+  `?delay=ms` when the loop starts, `?ms=ms` how long it blocks.
+-->
+<script>
+  const q = new URLSearchParams(location.search);
+  const delay = Number(q.get('delay') ?? 1200);
+  const busy = Number(q.get('ms') ?? 4000);
+  setTimeout(() => {
+    const end = Date.now() + busy;
+    while (Date.now() < end) { /* blocking the renderer on purpose */ }
+    document.title = 'spin done';
+  }, delay);
+</script>
+</head>
+<body>
+<h1>spin</h1>
+<p id="state">renderer will block for <output></output></p>
+<script>document.querySelector('output').textContent = busy + 'ms';</script>
+</body>
+</html>

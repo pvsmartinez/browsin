@@ -2,6 +2,7 @@ import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { bringToFront, connect, launch, shutdown, shutdownAll, status as browserStatus } from './browser.mjs';
 import { SNAPSHOT } from './query.mjs';
+import { HEAVY_TIMEOUT_MS, cdpHttp } from './cdp.mjs';
 import { buildLoginNoteHtml, loginGuideLines } from './login-note.mjs';
 import { gc, listSessions } from './gc.mjs';
 import { afterAction, cancelRecording, startRecording, statusRecording, stopRecording } from './recording.mjs';
@@ -737,7 +738,7 @@ export const cmdSnap = async (args) => {
     params.clip = { x: 0, y: 0, width: viewport.width, height: viewport.height, scale };
   }
 
-  const shot = await cdp.send('Page.captureScreenshot', params);
+  const shot = await cdp.send('Page.captureScreenshot', params, { timeout: HEAVY_TIMEOUT_MS });
   const buf = Buffer.from(shot.data, 'base64');
   ensureDirs();
   const ext = args.jpeg ? 'jpg' : 'png';
@@ -788,7 +789,7 @@ export const cmdPdf = async (args) => {
     scale: Number(args.scale || 1),
     marginTop: margin, marginBottom: margin, marginLeft: margin, marginRight: margin,
     displayHeaderFooter: false,
-  });
+  }, { timeout: HEAVY_TIMEOUT_MS });
   const buf = Buffer.from(res.data, 'base64');
   ensureDirs();
   const out = args.o || args.out || join(SHOTS, `${shotName(args.name, 'page')}.pdf`);
@@ -1095,7 +1096,7 @@ export const cmdTabs = async (args) => {
   const [sub = 'list', value] = args._;
   const s = await browserStatus();
   if (!s.up) return 'tabs  no browser running';
-  const list = await (await fetch(`http://127.0.0.1:${s.port}/json/list`)).json();
+  const list = await cdpHttp(s.port, '/json/list');
   const pages = list.filter((t) => t.type === 'page' && !t.url.startsWith('devtools://'));
   const pinned = readState().targetId;
   const current = pinned && pages.some((p) => p.id === pinned) ? pinned : pages[0]?.id;
@@ -1113,9 +1114,18 @@ export const cmdTabs = async (args) => {
       return `tabs  usando ${idx}: ${target.title || '(untitled)'} · ${target.url}\nnote  comandos seguintes ficam nesta aba; \`browsin tabs auto\` volta a seguir a primeira`;
     }
     if (sub === 'close') {
-      const res = await fetch(`http://127.0.0.1:${s.port}/json/close/${target.id}`).catch(() => null);
+      // `/json/close/<id>` answers 200 with the plain text `Target is closing`
+      // (JSON content-type, non-JSON body): parsing it as JSON turned every real
+      // close into "sem confirmação". A 200 here *is* the browser's confirmation —
+      // an unknown/gone id comes back as HTTP 404 and `cdpHttp` throws.
+      let confirmed = false;
+      try {
+        const body = await cdpHttp(s.port, `/json/close/${target.id}`, { timeout: 2000, parse: 'text' });
+        // Empty 200 counts too: an older/build-variant endpoint answers with no body.
+        confirmed = body === '' || /closing/i.test(body);
+      } catch { confirmed = false; }
       if (pinned === target.id) writeState({ targetId: null });
-      return `tabs  fechou ${idx}: ${target.title || '(untitled)'}${res ? '' : ' (sem confirmação do browser)'}`;
+      return `tabs  fechou ${idx}: ${target.title || '(untitled)'}${confirmed ? '' : ' (sem confirmação do browser)'}`;
     }
     throw new Error('usage: browsin tabs [list] | tabs use <n> | tabs close <n> | tabs auto');
   }

@@ -254,6 +254,16 @@ BROWSIN_SESSION=qa browsin check localhost:5173/experiments \
   calls from starting two browsers or reading each other's page — do not count on parallelism
   *within* a session; the second command waits for the first to exit. Different sessions really run
   in parallel.
+- **A stuck command ends in `timed out after Nms`, not in a hang.** Every CDP *message* has a
+  deadline (`BROWSIN_CDP_TIMEOUT_MS`, default 60000ms, `0` disables), and a socket that dies
+  mid-command rejects what was in flight (`CDP socket closed before <method> answered`) — both
+  commands and `once` event waits. So a page blocked in a JS loop or a dead browser costs one
+  failed command (exit 1) instead of a parked session holding its lock. **Scope of the variable:**
+  it only moves that per-message tier. Fixed by cost are `snap`/`pdf` (180s, real rasterisation),
+  `/json/*` control (5s; `tabs close` asks 2s), the WebSocket handshake (10s) and flow waits
+  (`once`, `--timeout`, mount, `--wait`, requests in flight) — raising the variable will not
+  stretch any of those, and it is worth raising only when a single page-side `js` legitimately
+  waits longer than a minute. Recovery for a wedged page is still `browsin reload`.
 - **A missing binary means `scripts/install-browsers.sh`**, not `npm install`. `browsin doctor` shows
   which one is in use and shouts when it fell back to the system Chrome.
 - **Chromium only.** A Safari/WebKit or Firefox bug does not show here.
