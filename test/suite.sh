@@ -536,6 +536,19 @@ else FAIL=$((FAIL+1)); FAILED+=("browser morto no meio: pendente rejeita"); prin
 rm -f "$LOCKED_OUT" "$LOCKED_OUT.code"
 t "próximo comando sobe outro browser" 'Teste browsin' browsin open $SP/basic.html
 
+echo "— sandbox aninhado (harness sob Seatbelt) —"
+# Under an outer macOS sandbox Chromium cannot sandbox its children, which die
+# and drop the socket on Page.enable. connect must relaunch with --no-sandbox.
+if command -v sandbox-exec >/dev/null; then
+  SBX() { BROWSIN_SESSION=suite-sbx sandbox-exec -p '(version 1)(allow default)' "$HERE/../bin/browsin" "$@"; }
+  tx "check sob sandbox cai para --no-sandbox" 0 'Teste browsin' SBX check $SP/basic.html
+  t "sessão lembra noSandbox" '"noSandbox": true' cat "$BROWSIN_DIR/suite-sbx/state.json"
+  tx "comando seguinte reusa o browser" 0 'Teste browsin' SBX open $SP/basic.html
+  sess suite-sbx down >/dev/null 2>&1
+  t "fora do sandbox o sandbox do Chrome continua ligado" '"noSandbox": false' bash -c "BROWSIN_SESSION=suite-nsb '$HERE/../bin/browsin' open $SP/basic.html >/dev/null 2>&1; cat '$BROWSIN_DIR/suite-nsb/state.json'"
+  sess suite-nsb down >/dev/null 2>&1
+fi
+
 echo "— down --all —"
 sess suite-a open $SP/basic.html >/dev/null 2>&1
 t "down --all derruba todas"      'all sessions'      browsin down --all

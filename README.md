@@ -366,6 +366,12 @@ antes de mexer em qualquer coisa.
   estava em voo com `CDP socket closed before <método> answered` — mensagens e eventos (`once`)
   pendentes. O comando sai não-zero e o próximo já anda no mesmo browser. `--timeout` continua mandando no que é espera de *fluxo* (mount, `--wait`,
   requests em voo); o deadline do CDP é o piso de cada mensagem, não o teto da operação.
+- **Dentro de um sandbox do macOS o Chrome não consegue se sandboxar.** Harness que roda as tools
+  sob Seatbelt (`sandbox-exec`) mata os filhos do Chrome com `sandbox initialization failed`, e o
+  primeiro comando caía com `CDP socket error before Page.enable answered`. Agora um browser recém
+  lançado que perde o socket assim é relançado uma vez com `--no-sandbox`, e a sessão lembra
+  (`noSandbox` no `state.json`). `BROWSIN_NO_SANDBOX=1` força desde o início. Fora de sandbox o
+  sandbox do Chrome continua ligado.
 - **`snap` do viewport não reflui a página.** O print padrão (a área visível) captura sem
   `captureBeyondViewport`, então não dispara `resize` — apps que redesenham no resize (canvas,
   Blockly) ficam intactos. `--clip`/`--full` usam `captureBeyondViewport` para renderizar o que

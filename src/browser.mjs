@@ -65,12 +65,21 @@ const isOurs = (pid) => {
 };
 
 /**
+ * Inside a macOS sandbox (an agent harness that runs its tools under Seatbelt)
+ * Chromium cannot apply its own sandbox to its children: they die with
+ * "sandbox initialization failed", and the first CDP command loses its socket.
+ * `BROWSIN_NO_SANDBOX=1` forces the fallback; `connect` also switches to it by
+ * itself, once, when a fresh browser dies that way, and the session remembers.
+ */
+const noSandboxForced = () => /^(1|true|yes)$/i.test(process.env.BROWSIN_NO_SANDBOX || '');
+
+/**
  * Starts the headless shell if it is not already listening. Idempotent within
  * the session; two sessions never adopt each other, because each probes its
  * own port. Runs the GC first — spawning is exactly when a dead session's
  * memory matters.
  */
-export const launch = async ({ headed = false } = {}) => {
+export const launch = async ({ headed = false, noSandbox = false } = {}) => {
   await ensureSessionLock();
   await gc();
   // The GC only runs when a CLI command does — without a janitor, the last
@@ -130,6 +139,8 @@ export const launch = async ({ headed = false } = {}) => {
       '--disable-renderer-backgrounding',
       'about:blank',
     ];
+    const sandboxOff = noSandbox || noSandboxForced() || !!state.noSandbox;
+    if (sandboxOff) args.unshift('--no-sandbox');
     // A full Chromium build would otherwise open a real window on the user's screen.
     if (!bin.shell && !headed) args.unshift('--headless=new');
 
@@ -141,12 +152,13 @@ export const launch = async ({ headed = false } = {}) => {
     writeState({
       pid: child.pid, port, binary: bin.path, headlessShell: bin.shell, headed,
       injectedIds: [], startedAt: Date.now(), lastUsed: Date.now(),
+      noSandbox: sandboxOff,
     });
 
     for (let i = 0; i < 60; i++) {
       await sleep(100);
       const v = await probe(port);
-      if (v) return { started: true, port, version: v.Browser, binary: bin.path, shell: bin.shell };
+      if (v) return { started: true, port, version: v.Browser, binary: bin.path, shell: bin.shell, noSandbox: sandboxOff };
       if (child.exitCode !== null || child.signalCode) break;
     }
     // The child died. If someone else grabbed the port meanwhile it was a race
@@ -183,12 +195,35 @@ const pageTarget = async (port) => {
  * Brings up the browser, attaches, and restores the state CDP drops when the
  * previous CLI process detached: the viewport override and the log collector.
  */
-export const connect = async ({ headed = false } = {}) => {
-  const { port } = await launch({ headed });
+const attachPage = async (port) => {
   const target = await pageTarget(port);
   const cdp = await CDP.attach(target.webSocketDebuggerUrl);
+  try {
+    await cdp.send('Page.enable');
+  } catch (err) {
+    cdp.close?.();
+    throw err;
+  }
+  return { cdp, target };
+};
 
-  await cdp.send('Page.enable');
+export const connect = async ({ headed = false } = {}) => {
+  const launched = await launch({ headed });
+  let attached;
+  try {
+    attached = await attachPage(launched.port);
+  } catch (err) {
+    // A browser we just started that drops the socket on its very first
+    // command is the nested-sandbox crash (see `noSandboxForced`): relaunch
+    // once without Chromium's sandbox. Anything else is a real failure.
+    if (!launched.started || launched.noSandbox || !/CDP socket/.test(err.message)) throw err;
+    const keep = readState();
+    await shutdown();
+    if (keep.port) writeState({ port: keep.port });
+    const retry = await launch({ headed, noSandbox: true });
+    attached = await attachPage(retry.port);
+  }
+  const { cdp, target } = attached;
   await cdp.send('Runtime.enable');
 
   const state = readState();

@@ -254,6 +254,11 @@ BROWSIN_SESSION=qa browsin check localhost:5173/experiments \
   calls from starting two browsers or reading each other's page — do not count on parallelism
   *within* a session; the second command waits for the first to exit. Different sessions really run
   in parallel.
+- **Under a macOS sandbox (Seatbelt) the browser turns off Chromium's own sandbox by itself.** Chromium cannot
+  sandbox its children inside another sandbox; a fresh browser that loses its socket on the first
+  command (`CDP socket error before Page.enable answered`) is relaunched once with `--no-sandbox`,
+  and the session remembers. `BROWSIN_NO_SANDBOX=1` forces it. Do not reinstall the browsers for
+  this error, and do not fall back to Playwright.
 - **A stuck command ends in `timed out after Nms`, not in a hang.** Every CDP *message* has a
   deadline (`BROWSIN_CDP_TIMEOUT_MS`, default 60000ms, `0` disables), and a socket that dies
   mid-command rejects what was in flight (`CDP socket closed before <method> answered`) — both
