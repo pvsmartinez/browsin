@@ -145,7 +145,9 @@ export const spawnJanitor = () => {
   if (janitorPid()) return false;
   try {
     const child = spawn(process.execPath, [join(import.meta.dirname, 'janitor.mjs')], {
-      detached: true, stdio: 'ignore', env: process.env,
+      // FAXINIM_DETACHED_ON_PURPOSE tells process monitors (Faxinim's orphan check) that this
+      // parentless, terminal-less process is the design, not a leftover: it exits by itself.
+      detached: true, stdio: 'ignore', env: { ...process.env, FAXINIM_DETACHED_ON_PURPOSE: 'browsin-janitor' },
     });
     child.on('error', () => {});
     child.unref();
