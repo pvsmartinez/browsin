@@ -106,6 +106,14 @@ tx "gate: falha de rede traz a URL"       2 '\[net::ERR_[A-Z_]+\] Fetch http://1
 tx "gate: documento 500 falha"            2 '\[500\] Document'           browsin check "$G/doc500" --fail-on network --no-snap
 tx "gate: --wait nunca verdadeiro sai 2"  2 'FAIL — --wait never true'   browsin check "$G/nomount" --wait "$MOUNT" --fail-on errors --timeout 1000 --no-snap
 tx "gate: request sem fim é pending, não falha" 0 '"pending": \[$'       browsin check "$G/stream" --wait "$MOUNT" --fail-on errors --settle 200 --timeout 1500 --json --no-snap
+# CORS: um POST JSON credenciado a outra origem leva um preflight (OPTIONS) com
+# requestId próprio. Se a página aborta o POST no meio do preflight (StrictMode
+# no dev), o Chromium não diz mais nada do preflight: ele segurava o settle até
+# o --timeout. Preflight que nunca é respondido segue pending.
+tx "gate: POST cross-origin com preflight sem pending" 0 '"pending": \[\],' browsin check "$G/cors" --wait "$MOUNT" --fail-on errors --settle 200 --timeout 5000 --json --no-snap
+tx "gate: preflight de POST abortado não fica pending" 0 '"pending": \[\],' browsin check "$G/corsabort" --wait "$MOUNT" --fail-on errors --settle 200 --timeout 5000 --json --no-snap
+tx "gate: preflight de POST abortado não segura o settle" 0 '"settleMs": ([0-9]{1,3}|[0-4][0-9]{3})$' browsin check "$G/corsabort" --wait "$MOUNT" --fail-on errors --settle 200 --timeout 5000 --json --no-snap
+tx "gate: preflight sem resposta segue pending" 0 '"method": "OPTIONS"' browsin check "$G/corshang" --wait "$MOUNT" --fail-on errors --settle 200 --timeout 1500 --json --no-snap
 tx "gate: página inalcançável sai 2 com json" 2 '"error": "net::ERR_'    browsin check http://127.0.0.1:1/ --fail-on errors --json
 tx "gate: categoria inválida sai 1 com json" 1 '"fatal":true'            browsin check "$G/clean" --fail-on bogus --json
 tx "gate: regex inválida sai 1"           1 'invalid regex'              browsin check "$G/clean" --fail-on errors --ignore '(' --no-snap

@@ -9,6 +9,29 @@
  */
 import { createServer } from 'node:http';
 
+// A second origin (another port) for the cross-origin cases: a credentialed
+// JSON POST to it is preceded by a CORS preflight (OPTIONS), answered at once,
+// after 300 ms (/api/slowsheet) or never (/api/hangsheet).
+const api = createServer((req, res) => {
+  const cors = { 'access-control-allow-origin': req.headers.origin || '*', 'access-control-allow-credentials': 'true' };
+  if (req.method === 'OPTIONS') {
+    if (req.url.startsWith('/api/hangsheet')) return;
+    // Max-Age 0: no preflight cache, so every run of a case sends one.
+    const answer = () => res.writeHead(200, { ...cors, 'access-control-allow-methods': 'POST',
+      'access-control-allow-headers': 'content-type', 'access-control-max-age': '0' }).end();
+    if (req.url.startsWith('/api/slowsheet')) setTimeout(answer, 300); else answer();
+    return;
+  }
+  res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+  res.end('{"ok":true}');
+});
+await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve));
+const API = `http://127.0.0.1:${api.address().port}`;
+
+// The page side of the cross-origin cases, as source: post(path, signal?).
+const post = `((path, signal) => fetch('${API}/api/' + path + '?' + Math.random(), { method: 'POST',
+  credentials: 'include', headers: { 'content-type': 'application/json' }, body: '{}', signal }))`;
+
 const page = (title, afterMount = '', head = '') => `<!doctype html><meta charset=utf-8><title>${title}</title>${head}
 <div id=root></div>
 <script>
@@ -50,6 +73,15 @@ const PAGES = {
   '/iframeloop': page('iframeloop', `const f = document.createElement('iframe');
     document.body.appendChild(f);
     setInterval(() => { f.src = '/sumiu?' + Math.random(); }, 20);`),
+  // A credentialed JSON POST to the other origin: preflight, then the POST.
+  '/cors': page('cors', `${post}('sheet')`),
+  // React StrictMode in dev: the first POST is aborted while its preflight is
+  // in flight (Chromium then reports nothing more for that preflight), the
+  // second one completes.
+  '/corsabort': page('corsabort', `const c = new AbortController(); ${post}('slowsheet', c.signal).catch(() => {});
+    setTimeout(() => c.abort(), 50); ${post}('slowsheet');`),
+  // The API never answers the preflight: both requests are really in flight.
+  '/corshang': page('corshang', `${post}('hangsheet').catch(() => {})`),
   '/nomount': '<!doctype html><meta charset=utf-8><title>nomount</title><div id=root></div>',
 };
 

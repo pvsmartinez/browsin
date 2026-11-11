@@ -157,16 +157,28 @@ const recordNetwork = async (cdp) => {
       return;
     }
     if (m.method === 'Network.requestWillBeSent') {
+      // A CORS preflight (OPTIONS) has its own requestId and names the real
+      // request as its initiator. Its fate is the real request's: when the
+      // page aborts that one mid-preflight (React StrictMode's first fetch),
+      // Chromium reports nothing more for the preflight — no response, no
+      // finish, no failure — and it would hold the settle to the timeout.
+      const preflightFor = p.initiator?.type === 'preflight' ? p.initiator.requestId : null;
       // A redirect reuses the requestId: the same request, now at the new URL.
       reqs.set(p.requestId, { method: p.request.method, url: p.request.url, type: p.type || 'Other', frameId: p.frameId,
-        status: null, error: null, canceled: false, done: false });
+        status: null, error: null, canceled: false, done: !!reqs.get(preflightFor)?.done, preflightFor });
       return;
     }
     const r = p && reqs.get(p.requestId);
     if (!r) return;
-    if (m.method === 'Network.responseReceived') { r.status = p.response.status; r.type = p.type || r.type; }
-    else if (m.method === 'Network.loadingFinished') r.done = true;
-    else if (m.method === 'Network.loadingFailed') { r.done = true; r.error = p.errorText; r.canceled = !!p.canceled; }
+    if (m.method === 'Network.responseReceived') {
+      r.status = p.response.status; r.type = p.type || r.type;
+      // A preflight is its headers: the answer is in, nothing else is coming.
+      if (r.type === 'Preflight') r.done = true;
+    } else if (m.method === 'Network.loadingFinished' || m.method === 'Network.loadingFailed') {
+      r.done = true;
+      if (m.method === 'Network.loadingFailed') { r.error = p.errorText; r.canceled = !!p.canceled; }
+      for (const q of reqs.values()) if (q.preflightFor === p.requestId) q.done = true;
+    }
   });
   const stop = () => { off(); return [...reqs.values()]; };
   // EventSource and WebSocket stay open by design; they are never "in flight".
