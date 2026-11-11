@@ -82,6 +82,19 @@ const PAGES = {
     <a id=go href="/clean" onclick="console.error('erro no clique')">ir</a>
     <button id=err onclick="console.error('erro do botão')">erro</button>
     <span id=hov onmouseover="console.error('erro entre comandos')">passe o mouse</span>`,
+  // Logs an error from inside the collector's mark(): right at the boundary a
+  // command takes when it starts (and again when it drains at the end) — the
+  // worst case of an error that lands while the mark's round trip is in
+  // flight. Each must be reported once, on its side of the boundary: by an
+  // action, whose window includes what came before; by a navigation, only the
+  // new document's.
+  '/marked': `<!doctype html><meta charset=utf-8><title>marked</title>
+    <button id=parado>parado</button>
+    <script>
+      let n = 0;
+      const mark = window.__browsin.mark;
+      window.__browsin.mark = () => { console.error('marca #' + (++n)); return mark(); };
+    </script>`,
   // A rejection handled late is revoked: not an error.
   '/handled': page('handled', `const p = Promise.reject(new Error('tratada depois'));
     setTimeout(() => p.catch(() => {}), 50);`),

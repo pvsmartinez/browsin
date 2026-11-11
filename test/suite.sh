@@ -153,6 +153,14 @@ browsin click '#nada' >/dev/null 2>&1
 CLICK_OUT=$(browsin click '#err' 2>&1)
 t "ação: erro da própria ação sai uma vez" '^1$' echo "$(echo "$CLICK_OUT" | grep -c 'erro do botão')"
 t "ação: erro entre comandos sobrevive a comando que falhou, uma vez" '^1$' echo "$(echo "$CLICK_OUT" | grep -c 'erro entre comandos')"
+# Erro emitido no meio da marca de início (/marked loga de dentro do mark()):
+# protocolo e buffer têm a mesma fronteira, então sai uma vez. Navegação: só o
+# do documento novo (#1, a marca do fim); o do anterior fica antes da janela.
+marks() { echo "$1" | grep '\[error\] marca' | sed 's/.*marca //' | tr '\n' ' '; }
+browsin open "$G/marked" >/dev/null 2>&1
+t "open: erro na fronteira sai uma vez, só o da página nova" '^#1 $' marks "$(browsin open "$G/marked" 2>&1)"
+t "reload: erro na fronteira sai uma vez, só o da página nova" '^#1 $' marks "$(browsin reload 2>&1)"
+t "ação: erro emitido durante a marca sai uma vez" '^#2 #3 $' marks "$(browsin click '#parado' 2>&1)"
 # Os blocos seguintes leem a página de teste básica.
 browsin open "$SP/basic.html" >/dev/null 2>&1
 # O servidor sai aqui: um `wait` sem pid mais adiante esperaria por ele para sempre.

@@ -251,7 +251,11 @@ const recordConsole = (cdp, { navigation = true } = {}) => {
       if (e) e.revoked = true;
     }
   });
-  return () => { off(); return entries.filter((e) => !e.revoked); };
+  const stop = () => { off(); return entries.filter((e) => !e.revoked); };
+  // Drops what arrived so far: called, in message order, at the boundary a
+  // command takes when it starts (see recordLogs).
+  stop.cut = () => { entries = []; };
+  return stop;
 };
 
 const EXCEPTION_KINDS = new Set(['exception', 'rejection']);
@@ -268,7 +272,13 @@ const fromProtocol = (l) => EXCEPTION_KINDS.has(l.kind) || l.kind === 'error';
  *
  * The buffer is split at a mark taken at the start, never drained there, so a
  * command that fails before its own drain (no match, a `js` that throws) leaves
- * it whole for `logs`. What the page logged before the mark (between commands)
+ * it whole for `logs`. The protocol stream is cut at the same point: at the
+ * mark's reply, in message order (`onReply`). The browser sends a renderer's
+ * events in the order they happened, so an error the stream received before
+ * that reply was emitted before mark() ran, and its in-page copy sits before
+ * the mark — one side of the boundary for both streams, never counted twice.
+ * Without a mark (no collector) nothing is cut and the buffer's errors are
+ * left to the stream. What the page logged before the mark (between commands)
  * is reported whole by an action, as it always was, and dropped by a
  * navigation (`navigation: true`), whose window is the new page. `stop.pull()`
  * drains mid-window (check's settle loop), so a document replaced later does
@@ -279,7 +289,13 @@ const recordLogs = async (cdp, { navigation = false } = {}) => {
   const take = async (expr) => {
     try { return JSON.parse(await cdp.eval(expr)); } catch { return null; }
   };
-  const start = await take('window.__browsin && window.__browsin.mark ? JSON.stringify(window.__browsin.mark()) : "null"');
+  let start = null;
+  await cdp.eval('window.__browsin && window.__browsin.mark ? JSON.stringify(window.__browsin.mark()) : "null"', {
+    onReply: (msg) => {
+      try { start = JSON.parse(msg.result?.result?.value); } catch { start = null; }
+      if (start) stopConsole.cut();
+    },
+  }).catch(() => {});
   const earlier = [];
   const page = [];
   const pull = async () => {

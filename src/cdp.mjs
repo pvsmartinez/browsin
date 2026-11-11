@@ -149,9 +149,10 @@ export class CDP {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     if (msg.id && this.#pending.has(msg.id)) {
-      const { resolve, reject, timer } = this.#pending.get(msg.id);
+      const { resolve, reject, timer, onReply } = this.#pending.get(msg.id);
       this.#pending.delete(msg.id);
       clearTimeout(timer);
+      if (onReply) { try { onReply(msg); } catch { /* a hook never breaks dispatch */ } }
       if (msg.error) reject(new Error(`${msg.error.message} (${msg.error.code})`));
       else resolve(msg.result);
       return;
@@ -163,14 +164,19 @@ export class CDP {
    * Sends a command and waits for its reply. `timeout` (default from
    * `BROWSIN_CDP_TIMEOUT_MS`, 0 to wait indefinitely) bounds the wait so a
    * wedged page/browser becomes an error instead of a hang.
+   *
+   * `onReply(msg)` runs synchronously when the reply is dispatched, in message
+   * order: an event the browser sent after this reply has not reached any
+   * listener yet. The awaiting code cannot promise that — several frames can
+   * be dispatched in one go before its continuation runs.
    */
-  send(method, params = {}, { timeout = this.#timeout } = {}) {
+  send(method, params = {}, { timeout = this.#timeout, onReply = null } = {}) {
     if (this.#closed || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error(`CDP connection closed before ${method}`));
     }
     const id = ++this.#id;
     return new Promise((resolve, reject) => {
-      const entry = { resolve, reject, method, timer: null };
+      const entry = { resolve, reject, method, timer: null, onReply };
       if (timeout > 0) {
         entry.timer = setTimeout(() => {
           if (!this.#pending.delete(id)) return;
@@ -223,13 +229,13 @@ export class CDP {
    * and turns a page-side throw into a real rejection instead of a silent
    * `undefined` — the failure mode that makes hand-rolled CDP feel flaky.
    */
-  async eval(expression, { returnByValue = true, timeout } = {}) {
+  async eval(expression, { returnByValue = true, timeout, onReply } = {}) {
     const r = await this.send('Runtime.evaluate', {
       expression,
       returnByValue,
       awaitPromise: true,
       allowUnsafeEvalBlockedByCSP: true,
-    }, timeout === undefined ? {} : { timeout });
+    }, { ...(timeout === undefined ? {} : { timeout }), ...(onReply ? { onReply } : {}) });
     if (r.exceptionDetails) {
       const d = r.exceptionDetails;
       throw new Error(d.exception?.description || d.text || 'page threw');

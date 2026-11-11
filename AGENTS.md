@@ -61,7 +61,9 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   redirect levava os erros junto).
 - **Todo comando que reporta log passa por `recordLogs`** (`src/commands.mjs`): exceção e
   `console.error` do protocolo, o resto do buffer da página, cortado numa marca (`mark()` do
-  coletor) tirada no início — nunca drenado no início, para um comando que falha cedo deixar o
+  coletor) tirada no início. O stream do protocolo é cortado na resposta dessa mesma marca, na
+  ordem das mensagens (`onReply` do `send`, não depois do `await`): as duas fontes têm uma
+  fronteira só, e um erro emitido durante o round trip da marca sai uma vez. Nunca drenado no início, para um comando que falha cedo deixar o
   buffer inteiro ao `logs`. Navegação (`open`, `reload`, `check`) descarta o que veio antes da
   marca; ação mantém. Não leia `window.__browsin` direto num comando novo: era assim que `open` e
   `reload` perdiam o erro logado antes de um redirect. Só o `logs` lê o buffer puro.
