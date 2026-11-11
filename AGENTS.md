@@ -43,7 +43,7 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   `pageTarget`; sem pin, segue a primeira aba. `gc` também varre bases irmãos `browsin*` (dirs
   por-run do kit, testes) e mata browser órfão sem state — sem apagar arquivos alheios
   (`BROWSIN_ORPHAN_GRACE_S` dá a carência, default 300s).
-- **Rode `test/suite.sh` (~190 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
+- **Rode `test/suite.sh` (~220 casos) antes de dar qualquer mudança por pronta.** Ele cobre os
   buracos que já morderam: escala dobrada de `--dpr`, `confirm()` que trava a página, offset de
   coordenada dentro de iframe, download de blob, PDF paginado, e sessões concorrentes (isolamento,
   `gc`, órfão, cap, `down --all`).
