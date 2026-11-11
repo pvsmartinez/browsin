@@ -45,8 +45,9 @@ scripts/setup.sh                 # browsers + `browsin` no PATH + skill do agent
 
 O `setup.sh` é idempotente — rode de novo depois de um `git pull`. Flags: `--shell-only` (195 MB
 em vez de 550; o `login` passa a usar um Google Chrome/Chromium já instalado, e fica indisponível sem um), `--force` (rebaixar os browsers), `--no-link`, `--no-skill`.
-Ele instala em `~/.local/bin` (troque com `BROWSIN_BIN_DIR`) e symlinka `skills/browsin` em
-`~/.claude/skills/` e `~/.codex/skills/` quando existirem.
+Ele instala em `~/.local/bin` (troque com `BROWSIN_BIN_DIR`) e symlinka cada pasta de `skills/` em
+`~/.claude/skills/` e `~/.codex/skills/` quando existirem: `browsin` (a ferramenta) e `ui-mocks`
+(mostrar a tela a uma pessoa antes de construí-la: mock com dados reais, uma ou várias opções).
 
 Só os browsers, sem mexer em PATH nem skill:
 

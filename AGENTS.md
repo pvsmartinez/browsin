@@ -61,6 +61,9 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   redirect levava os erros junto).
 - Comando ou flag novo: atualize `README.md`, `skills/browsin/SKILL.md` **e** a suíte. Ferramenta
   sem skill em dia não é chamada por ninguém.
+- `skills/ui-mocks/` é a segunda skill: o ofício de mostrar uma tela antes de construí-la, usando o
+  browsin. É julgamento, não procedimento — não a transforme em passo fixo. O `setup.sh` liga toda
+  pasta de `skills/`.
 - Os binários são do browsin: `~/Library/Caches/browsin/{headless-shell,chromium}` (ou
   `$XDG_CACHE_HOME/browsin` fora do macOS), baixados do CDN Chrome-for-Testing por
   `scripts/install-browsers.sh` — sem npm, sem Playwright. `BROWSIN_BROWSERS` aponta para outra

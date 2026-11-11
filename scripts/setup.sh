@@ -1,6 +1,6 @@
 #!/bin/bash
-# Instalação completa numa chamada: os dois Chromium, o `browsin` no PATH e a
-# skill no diretório do agente.
+# Instalação completa numa chamada: os dois Chromium, o `browsin` no PATH e as
+# skills (skills/*) no diretório do agente.
 #
 # Nada aqui é irreversível: os browsers vivem num cache, o CLI é um symlink e a
 # skill também. Rode de novo depois de um `git pull` — é idempotente.
@@ -51,11 +51,15 @@ if [ "$SKILL" -eq 1 ]; then
   for d in "${SKILL_DIRS[@]}"; do
     [ -d "$(dirname "$d")" ] || continue
     mkdir -p "$d"
-    ln -sfn "$HERE/skills/browsin" "$d/browsin"
-    echo "  $d/browsin -> $HERE/skills/browsin"
+    # Toda skill do repo: a `browsin` (a ferramenta) e as que a usam (ui-mocks).
+    for s in "$HERE"/skills/*/; do
+      s="${s%/}"; n="$(basename "$s")"
+      ln -sfn "$s" "$d/$n"
+      echo "  $d/$n -> $s"
+    done
     found=1
   done
-  [ "$found" -eq 1 ] || echo "  nenhum diretório de agente conhecido; copie skills/browsin/ à mão"
+  [ "$found" -eq 1 ] || echo "  nenhum diretório de agente conhecido; copie as pastas de skills/ à mão"
 fi
 
 echo
