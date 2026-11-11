@@ -61,6 +61,27 @@ const PAGES = {
     setTimeout(() => { throw new Error('boom antes do redirect'); });
     setTimeout(() => location.replace('/clean'), 30);
   </script>`,
+  // Same, but it replaces itself with its own URL and the second load mounts:
+  // a flag in sessionStorage flips on every load, so every open AND every
+  // reload of /bounce logs, throws and redirects before the page you end on.
+  '/bounce': `<!doctype html><meta charset=utf-8><title>bounce</title><div id=root></div><script>
+    if (!sessionStorage.getItem('bounced')) {
+      sessionStorage.setItem('bounced', '1');
+      console.error('erro antes do bounce');
+      setTimeout(() => { throw new Error('boom antes do bounce'); });
+      setTimeout(() => location.replace(location.href), 30);
+    } else {
+      sessionStorage.removeItem('bounced');
+      setTimeout(() => { document.getElementById('root').innerHTML = '<p>montou bounce</p>'; }, 150);
+    }
+  </script>`,
+  // Actions: a link whose handler logs before the browser follows it (the
+  // error belongs to the document the click left), a button that only logs,
+  // and a hover target that logs between commands (hover reads no logs).
+  '/clicklog': `<!doctype html><meta charset=utf-8><title>clicklog</title>
+    <a id=go href="/clean" onclick="console.error('erro no clique')">ir</a>
+    <button id=err onclick="console.error('erro do botão')">erro</button>
+    <span id=hov onmouseover="console.error('erro entre comandos')">passe o mouse</span>`,
   // A rejection handled late is revoked: not an error.
   '/handled': page('handled', `const p = Promise.reject(new Error('tratada depois'));
     setTimeout(() => p.catch(() => {}), 50);`),

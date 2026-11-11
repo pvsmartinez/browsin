@@ -204,17 +204,22 @@ const remoteText = (o) => {
 };
 
 /**
- * Console errors and uncaught exceptions from the protocol, for `check`. The
- * in-page buffer lives in the document, so a page that logs and then
- * redirects (`location.replace`, an auth bounce) took its errors with it
- * before anyone drained it; this stream outlives the document. Messages older
- * than the recording are dropped: `Runtime.enable` (in connect) replays the
- * console history of the page the previous command left — today that replay
- * lands before this subscription, and the timestamp keeps it out if the order
- * ever changes. An exception later handled
- * (`exceptionRevoked`: a rejection caught late) is not an error.
+ * Console errors and uncaught exceptions from the protocol. The in-page buffer
+ * lives in the document, so a page that logs and then redirects
+ * (`location.replace`, an auth bounce) took its errors with it before anyone
+ * drained it; this stream outlives the document. Messages older than the
+ * recording are dropped: `Runtime.enable` (in connect) replays the console
+ * history of the page the previous command left — today that replay lands
+ * before this subscription, and the timestamp keeps it out if the order ever
+ * changes. An exception later handled (`exceptionRevoked`: a rejection caught
+ * late) is not an error.
+ *
+ * `navigation` (open, reload, check): the window starts a new page, so what
+ * the previous document logged while the navigation was pending is dropped at
+ * the first commit. An action (click, key, js…) keeps it: the error a click
+ * handler logs right before the browser follows the link is the click's.
  */
-const recordConsole = (cdp) => {
+const recordConsole = (cdp, { navigation = true } = {}) => {
   const t0 = Date.now();
   let entries = [];
   const byId = new Map();
@@ -226,7 +231,7 @@ const recordConsole = (cdp) => {
       // logged while the navigation was pending is not this page's. Later
       // ones (a redirect of this page) keep everything — that is the case
       // this stream exists for.
-      if (!committed) { committed = true; entries = []; }
+      if (!committed) { committed = true; if (navigation) entries = []; }
       return;
     }
     if (m.method === 'Runtime.consoleAPICalled') {
@@ -247,6 +252,53 @@ const recordConsole = (cdp) => {
     }
   });
   return () => { off(); return entries.filter((e) => !e.revoked); };
+};
+
+const EXCEPTION_KINDS = new Set(['exception', 'rejection']);
+/** Kinds the protocol stream reports; the in-page copy of these is a duplicate. */
+const fromProtocol = (l) => EXCEPTION_KINDS.has(l.kind) || l.kind === 'error';
+
+/**
+ * What the page reported during one command — every command that reports
+ * logs goes through here. Exceptions and console errors come from the protocol
+ * (`recordConsole`), which outlives the document: what a page logs right before
+ * it replaces itself (a redirect, the link a click followed, the form an Enter
+ * submitted) is still reported. The rest — warn/log/info, a resource that
+ * failed, the collector's http/neterr — comes from the in-page buffer.
+ *
+ * The buffer is split at a mark taken at the start, never drained there, so a
+ * command that fails before its own drain (no match, a `js` that throws) leaves
+ * it whole for `logs`. What the page logged before the mark (between commands)
+ * is reported whole by an action, as it always was, and dropped by a
+ * navigation (`navigation: true`), whose window is the new page. `stop.pull()`
+ * drains mid-window (check's settle loop), so a document replaced later does
+ * not take its warnings with it.
+ */
+const recordLogs = async (cdp, { navigation = false } = {}) => {
+  const stopConsole = recordConsole(cdp, { navigation });
+  const take = async (expr) => {
+    try { return JSON.parse(await cdp.eval(expr)); } catch { return null; }
+  };
+  const start = await take('window.__browsin && window.__browsin.mark ? JSON.stringify(window.__browsin.mark()) : "null"');
+  const earlier = [];
+  const page = [];
+  const pull = async () => {
+    const got = await take(`window.__browsin ? JSON.stringify({ mark: window.__browsin.mark ? window.__browsin.mark() : null,
+      entries: window.__browsin.drain() }) : "null"`);
+    if (!got) return;
+    const sameDoc = !!(start && got.mark && got.mark.doc === start.doc);
+    for (const l of got.entries) {
+      if (sameDoc && l.seq <= start.seq) { if (!navigation) earlier.push(l); }
+      else if (!fromProtocol(l)) page.push(l);
+    }
+  };
+  const stop = async () => {
+    await pull();
+    return [...earlier, ...stopConsole(), ...page];
+  };
+  stop.pull = pull;
+  stop.off = () => { stopConsole(); };
+  return stop;
 };
 
 const requestLabel = (r) => {
@@ -323,10 +375,11 @@ export const cmdOpen = async (args) => {
   const url = resolveTarget(args._[0]);
   if (!url) throw new Error('usage: browsin open <url|file>');
   const { cdp, viewport, dialogs } = await connect();
+  const stopLogs = await recordLogs(cdp, { navigation: true });
   const stopNet = await recordNetwork(cdp);
   const notes = await navigate(cdp, url, { waitExpr: args.wait, timeout: Number(args.timeout || 15000), noWait: !!args['no-wait'] });
   const head = await pageHead(cdp);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   const net = stopNet();
   await afterAction(cdp);
   cdp.close();
@@ -341,7 +394,6 @@ export const cmdOpen = async (args) => {
 
 /** What `check --fail-on` can fail on; `errors` is all of them. */
 const FAIL_ON = ['exceptions', 'console', 'network', 'wait'];
-const EXCEPTION_KINDS = new Set(['exception', 'rejection']);
 
 const parseFailOn = (v) => {
   if (v === undefined) return null;
@@ -373,10 +425,10 @@ const isInflight = (r) => !r.done && r.type !== 'EventSource' && r.type !== 'Web
  * The settle window: errors that arrive after the mount (an API call that
  * 500s, the render that throws on its response) are what a gate exists to
  * catch. Watch for `settleMs`, then until no request is in flight (bounded by
- * `timeout`), draining the page's log buffer on every tick so a document
- * replaced mid-window (a redirect) does not take its errors with it.
+ * `timeout`), draining the page's log buffer on every tick (`pull`) so a
+ * document replaced mid-window (a redirect) does not take its warnings with it.
  */
-const observe = async (cdp, stopNet, logs, { settleMs, timeout, ignore = [] }) => {
+const observe = async (cdp, stopNet, pull, { settleMs, timeout, ignore = [] }) => {
   // An ignored request (a stream the gate was told about) is not waited for.
   const waitingOn = () => stopNet.inflight().filter((r) => !ignore.some((re) => re.test(r.url)));
   const t0 = Date.now();
@@ -384,14 +436,14 @@ const observe = async (cdp, stopNet, logs, { settleMs, timeout, ignore = [] }) =
   const hardEnd = minEnd + timeout;
   let waitedForNet = false;
   for (;;) {
-    logs.push(...await drainLogs(cdp));
+    await pull();
     const now = Date.now();
     if (now >= hardEnd || (now >= minEnd && !waitingOn().length)) break;
     if (now >= minEnd) waitedForNet = true;
     await sleep(100);
   }
   // A response that just landed renders on the next frames; let it throw now.
-  if (waitedForNet) { await settle(cdp); logs.push(...await drainLogs(cdp)); }
+  if (waitedForNet) { await settle(cdp); await pull(); }
   return Date.now() - t0;
 };
 
@@ -458,8 +510,7 @@ export const cmdCheck = async (args) => {
 
   const { cdp, viewport, dialogs } = await connect();
   // What the previous page left undrained is not this route's problem.
-  await drainLogs(cdp);
-  const stopConsole = recordConsole(cdp);
+  const stopLogs = await recordLogs(cdp, { navigation: true });
   const stopNet = await recordNetwork(cdp);
   let notes;
   try {
@@ -469,7 +520,7 @@ export const cmdCheck = async (args) => {
     // it is the verdict — the route did not load.
     if (!failOn || !err.navError) throw err;
     stopNet();
-    stopConsole();
+    stopLogs.off();
     cdp.close();
     const v = gateVerdict({ logs: [], net: [], navError: err.navError, failOn, ignore });
     if (json) {
@@ -481,14 +532,12 @@ export const cmdCheck = async (args) => {
     }
     return { out: [`check ${url}`, `error ${err.navError}`, gateLine(v, err.navError)].join('\n'), code: 2 };
   }
-  const pageLogs = [];
-  const settledMs = settleMs ? await observe(cdp, stopNet, pageLogs, { settleMs, timeout, ignore }) : 0;
+  const settledMs = settleMs ? await observe(cdp, stopNet, stopLogs.pull, { settleMs, timeout, ignore }) : 0;
   const head = await pageHead(cdp);
-  pageLogs.push(...await drainLogs(cdp));
-  const net = stopNet();
   // Exceptions and console errors from the protocol stream (it survives a
   // redirect); the rest (warn, resource, the collector's http/neterr) from the page.
-  const logs = [...stopConsole(), ...pageLogs.filter((l) => !EXCEPTION_KINDS.has(l.kind) && l.kind !== 'error')];
+  const logs = await stopLogs();
+  const net = stopNet();
   const stats = JSON.parse(await cdp.eval(`JSON.stringify({
     nodes: document.querySelectorAll('*').length,
     overflowX: document.documentElement.scrollWidth > innerWidth + 1,
@@ -536,6 +585,7 @@ export const cmdCheck = async (args) => {
 
 export const cmdReload = async (args) => {
   const { cdp, dialogs } = await connect();
+  const stopLogs = await recordLogs(cdp, { navigation: true });
   const stopNet = await recordNetwork(cdp);
   const loaded = cdp.once('Page.loadEventFired', { timeout: Number(args.timeout || 15000) }).catch(() => null);
   await cdp.send('Page.reload', { ignoreCache: !!args.hard });
@@ -544,7 +594,7 @@ export const cmdReload = async (args) => {
   const waited = args.wait ? await waitNotes(cdp, args.wait, Number(args.timeout || 15000)) : [];
   await settle(cdp);
   const head = await pageHead(cdp);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   const net = stopNet();
   await afterAction(cdp);
   cdp.close();
@@ -668,6 +718,7 @@ export const cmdJs = async (args) => {
   const expr = args._.join(' ');
   if (!expr) throw new Error("usage: browsin js '<expression>'");
   const { cdp } = await connect();
+  const stopLogs = await recordLogs(cdp);
   let value;
   try {
     value = await cdp.eval(expr);
@@ -680,7 +731,7 @@ export const cmdJs = async (args) => {
       value = '(valor não serializável — a expressão rodou; retorne um primitivo ou use `void`)';
     } else throw err;
   }
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   await afterAction(cdp);
   cdp.close();
   const out = [typeof value === 'string' ? value : JSON.stringify(value, null, 2)];
@@ -688,6 +739,12 @@ export const cmdJs = async (args) => {
   return out.join('\n');
 };
 
+/**
+ * What the page logged between commands, from the in-page buffer — the only
+ * copy that outlives the CLI process that saw it happen (no daemon). Each
+ * command reports its own window through `recordLogs`; this is what lands
+ * after it returned, as long as the document that logged it is still there.
+ */
 export const cmdLogs = async (args) => {
   const { cdp } = await connect();
   const logs = await drainLogs(cdp);
@@ -775,6 +832,7 @@ export const cmdSnap = async (args) => {
 export const cmdPdf = async (args) => {
   const target = args._[0] ? resolveTarget(args._[0]) : null;
   const { cdp, dialogs } = await connect();
+  const stopLogs = await recordLogs(cdp, { navigation: !!target });
   if (target) await navigate(cdp, target, { waitExpr: args.wait, timeout: Number(args.timeout || 20000), noWait: !!args['no-wait'] });
 
   const PAPER = {
@@ -806,7 +864,7 @@ export const cmdPdf = async (args) => {
   ensureDirs();
   const out = args.o || args.out || join(SHOTS, `${shotName(args.name, 'page')}.pdf`);
   writeFileSync(out, buf);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   cdp.close();
 
   // The page count lives in the PDF's own /Count, cheaper than parsing properly.
@@ -822,6 +880,7 @@ export const cmdClick = async (args) => {
   const sel = args._[0];
   if (!sel) throw new Error('usage: browsin click <selector>');
   const { cdp, dialogs } = await connect();
+  const stopLogs = await recordLogs(cdp);
   const box = await findEl(cdp, sel, { nth: Number(args.nth || 0), scroll: true });
   if (box.w < 1 || box.h < 1) { cdp.close(); throw new Error(`click target has no size: ${sel}`); }
 
@@ -834,7 +893,7 @@ export const cmdClick = async (args) => {
   const waited = args.wait ? await waitNotes(cdp, args.wait, Number(args.timeout || 5000)) : (await sleep(250), []);
   await settle(cdp);
   const head = await pageHead(cdp);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   await afterAction(cdp);
   cdp.close();
   return [`click ${sel} (${box.tag}) at ${Math.round(box.x)},${Math.round(box.y)}`, `url   ${head.url}`,
@@ -859,6 +918,7 @@ export const cmdType = async (args) => {
   const text = rest.join(' ');
   if (!sel || !text) throw new Error('usage: browsin type <selector> <text>');
   const { cdp } = await connect();
+  const stopLogs = await recordLogs(cdp);
   const focused = JSON.parse(await cdp.eval(`(() => {
     const q = window.__bq(${JSON.stringify(sel)}, ${Number(args.nth || 0)});
     if (!q.el) return JSON.stringify({ ok: false, matches: q.matches, visibleMatches: q.visibleMatches });
@@ -883,7 +943,7 @@ export const cmdType = async (args) => {
     const el = window.__bq(${JSON.stringify(sel)}, ${Number(args.nth || 0)}).el;
     return 'value' in el ? el.value : el.textContent;
   })()`);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   await afterAction(cdp);
   cdp.close();
   return [`type  ${sel} = ${JSON.stringify(String(value).slice(0, 200))}${args.enter ? ' + Enter' : ''}`,
@@ -914,6 +974,7 @@ export const cmdKey = async (args) => {
   const key = args._[0];
   if (!key) throw new Error(`usage: browsin key <Enter|Tab|Escape|ArrowDown|…> [--mod cmd,shift]`);
   const { cdp, dialogs } = await connect();
+  const stopLogs = await recordLogs(cdp);
   if (args.on) {
     await cdp.eval(`(() => { const q = window.__bq(${JSON.stringify(args.on)}); if (q.el) q.el.focus(); })()`);
   }
@@ -921,7 +982,7 @@ export const cmdKey = async (args) => {
   const waited = args.wait ? await waitNotes(cdp, args.wait, Number(args.timeout || 5000)) : (await sleep(200), []);
   await settle(cdp);
   const head = await pageHead(cdp);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   await afterAction(cdp);
   cdp.close();
   return [`key   ${args.mod ? args.mod + '+' : ''}${key}`, `url   ${head.url}`,
@@ -963,11 +1024,12 @@ export const cmdUpload = async (args) => {
     return abs;
   });
   const { cdp } = await connect();
+  const stopLogs = await recordLogs(cdp);
   await cdp.send('DOM.enable');
   const objectId = await objectIdFor(cdp, sel, Number(args.nth || 0));
   await cdp.send('DOM.setFileInputFiles', { files: paths, objectId });
   await settle(cdp);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   await afterAction(cdp);
   cdp.close();
   return [`up    ${sel} ← ${paths.length} file(s): ${paths.map((p) => p.split('/').pop()).join(', ')}`,
@@ -979,6 +1041,7 @@ export const cmdDrag = async (args) => {
   const [from, to] = args._;
   if (!from || (!to && !args.by)) throw new Error('usage: browsin drag <fromSel> <toSel> | browsin drag <fromSel> --by dx,dy');
   const { cdp } = await connect();
+  const stopLogs = await recordLogs(cdp);
   const a = await findEl(cdp, from, { nth: Number(args.nth || 0), scroll: true });
   let target;
   if (args.by) {
@@ -1003,7 +1066,7 @@ export const cmdDrag = async (args) => {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 });
   await sleep(200);
   await settle(cdp);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   await afterAction(cdp);
   cdp.close();
   return [`drag  ${Math.round(a.x)},${Math.round(a.y)} → ${Math.round(target.x)},${Math.round(target.y)} in ${steps} steps`,
@@ -1207,6 +1270,7 @@ export const cmdDownload = async (args) => {
   const dir = args.dir ? resolvePath(args.dir) : DOWNLOADS;
   ensureDirs();
   const { cdp, dialogs } = await connect();
+  const stopLogs = await recordLogs(cdp);
 
   const finished = [];
   const started = [];
@@ -1228,7 +1292,7 @@ export const cmdDownload = async (args) => {
 
   const deadline = Date.now() + Number(args.timeout || 15000);
   while (Date.now() < deadline && !finished.length) await sleep(150);
-  const logs = await drainLogs(cdp);
+  const logs = await stopLogs();
   cdp.close();
 
   if (!finished.length) {

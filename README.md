@@ -43,11 +43,17 @@ git clone git@gitlab.com:super-company-git/game-tools/browsin.git && cd browsin
 scripts/setup.sh                 # browsers + `browsin` no PATH + skill do agente
 ```
 
-O `setup.sh` é idempotente — rode de novo depois de um `git pull`. Flags: `--shell-only` (195 MB
-em vez de 550; o `login` passa a usar um Google Chrome/Chromium já instalado, e fica indisponível sem um), `--force` (rebaixar os browsers), `--no-link`, `--no-skill`.
+O `setup.sh` é idempotente — rode de novo depois de um `git pull` — e não muda nenhum arquivo
+versionado. Flags: `--shell-only` (195 MB em vez de 550; o `login` passa a usar um Google
+Chrome/Chromium já instalado, e fica indisponível sem um), `--force` (rebaixar os browsers),
+`--no-browsers` (não baixa os browsers e imprime, numa linha, o comando para rodar uma vez:
+`bash <repo>/scripts/install-browsers.sh` — eles vivem num cache que toda versão compartilha),
+`--no-link`, `--no-skill`.
 Ele instala em `~/.local/bin` (troque com `BROWSIN_BIN_DIR`) e symlinka cada pasta de `skills/` em
-`~/.claude/skills/` e `~/.codex/skills/` quando existirem: `browsin` (a ferramenta) e `ui-mocks`
-(mostrar a tela a uma pessoa antes de construí-la: mock com dados reais, uma ou várias opções).
+`~/.claude/skills/` e `~/.codex/skills/` quando existirem (troque com `BROWSIN_SKILL_DIRS`, separados
+por `:`): `browsin` (a ferramenta) e `ui-mocks` (mostrar a tela a uma pessoa antes de construí-la:
+mock com dados reais, uma ou várias opções). Um link antigo é trocado; uma pasta de verdade com o
+nome de uma skill é de outra pessoa — o setup avisa e não mexe nela.
 
 Só os browsers, sem mexer em PATH nem skill:
 
@@ -138,7 +144,7 @@ Configuração — workspace (`<raiz>/.pi/tools.json`) ou global (`~/.pi/agent/t
 | `dom <sel>` | rect, visibilidade, estilos computados, `outerHTML` truncado |
 | `text [sel]` | `innerText` do elemento (default `body`), whitespace normalizado; `--limit N` trunca, `--nth N` desempata |
 | `js '<expr>'` | avalia na página (promise resolvida, exceção vira erro de verdade) |
-| `logs [--all]` | console, exceção, rejection, 4xx/5xx e recurso que falhou |
+| `logs [--all]` | o que a página logou **entre** comandos: console, exceção, rejection, 4xx/5xx e recurso que falhou |
 | `network [url]` | toda request com o status code, no nível do protocolo |
 | `snap [--clip SEL] [--full] [--jpeg]` | screenshot; default viewport em 1x |
 | `pdf [url] [--format a4\|a3] [--landscape]` | imprime honrando `@page` e quebra de página |
@@ -379,6 +385,12 @@ antes de mexer em qualquer coisa.
   está fora da tela, e aí a página é relayoutada uma vez.
 - **`logs` drena.** Ler duas vezes não repete. E qualquer comando que age (`click`, `key`, `type`)
   também drena ao reportar.
+- **Erro antes de um redirect não some.** `open`, `reload`, `check` e as ações (`click`, `key`,
+  `type`, `js`, `upload`, `drag`, `download`, `pdf`) leem exceção e `console.error` do protocolo,
+  que sobrevive ao documento: o erro que a página loga antes de se substituir (um bounce de auth,
+  o link que o clique seguiu, o form que o Enter enviou) aparece no relatório do próprio comando.
+  O resto (warn, log, recurso, http) vem do buffer da página. Só o `logs` lê apenas o buffer — o
+  que acontece entre comandos —, e esse morre com o documento.
 - **`--clip 'text=…'` pega o menor elemento que contém o texto**, quase sempre menor do que a
   caixa que você quer fotografar. Para print, prefira um seletor CSS do container, ou `--pad`.
 - **Descendente não atravessa shadow boundary.** Use o seletor como ele é *dentro* do componente

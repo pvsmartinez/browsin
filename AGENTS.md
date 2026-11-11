@@ -59,6 +59,12 @@ mexer** — ela tem os comandos, as receitas e as armadilhas.
   página: rede de `recordNetwork` (um registro por requestId; request cancelada não é falha),
   exceção e `console.error` de `recordConsole` (o buffer da página morre com o documento — um
   redirect levava os erros junto).
+- **Todo comando que reporta log passa por `recordLogs`** (`src/commands.mjs`): exceção e
+  `console.error` do protocolo, o resto do buffer da página, cortado numa marca (`mark()` do
+  coletor) tirada no início — nunca drenado no início, para um comando que falha cedo deixar o
+  buffer inteiro ao `logs`. Navegação (`open`, `reload`, `check`) descarta o que veio antes da
+  marca; ação mantém. Não leia `window.__browsin` direto num comando novo: era assim que `open` e
+  `reload` perdiam o erro logado antes de um redirect. Só o `logs` lê o buffer puro.
 - Comando ou flag novo: atualize `README.md`, `skills/browsin/SKILL.md` **e** a suíte. Ferramenta
   sem skill em dia não é chamada por ninguém.
 - `skills/ui-mocks/` é a segunda skill: o ofício de mostrar uma tela antes de construí-la, usando o

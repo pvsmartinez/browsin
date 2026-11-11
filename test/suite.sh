@@ -52,7 +52,14 @@ browsin down >/dev/null 2>&1
 echo "— navegação e diagnóstico —"
 browsin viewport laptop >/dev/null
 t "check acha console/rede/recurso/overflow" 'horizontal overflow' browsin check $SP/basic.html --no-snap
-t "logs pega exceção atrasada"               'exception.*boom'      browsin logs
+# Exceção que chega depois do comando que a armou: `logs` (o buffer da página)
+# a pega. O hover arma o timer e não lê log; a suíte espera a condição (o timer
+# disparou), não um tempo fixo. Antes o timer era o da própria página (50 ms) e,
+# com a máquina carregada, o check acima terminava depois dele e levava a exceção.
+browsin js "document.getElementById('b').onmouseover = () => setTimeout(() => { document.body.dataset.late = '1'; null.lateboom }, 100); 1" >/dev/null
+browsin hover '#b' >/dev/null
+for _ in $(seq 1 100); do browsin dom 'body[data-late]' >/dev/null 2>&1 && break; sleep 0.1; done
+t "logs pega exceção atrasada"               'exception.*lateboom'  browsin logs
 t "network lista tudo"                        'request\(s\)'         browsin network $SP/basic.html
 t "reload"                                    'reload'               browsin reload
 t "js avalia"                                 'Teste browsin'        browsin js 'document.title'
@@ -62,7 +69,9 @@ t "alias eval é js"                           'Teste browsin'        browsin ev
 # SPA que só pinta depois do load: a espera de mount padrão pega; --no-wait não.
 echo "— espera de mount (SPA) —"
 t "open espera o mount por padrão" 'title Montou'      browsin open $SP/slowmount.html
-t "open --no-wait não espera"      'title Aguardando'  browsin open $SP/slowmount.html --no-wait
+# Monta em 10 s, não nos 500 ms de cima: provar que o --no-wait não espera não
+# pode depender de o open terminar antes de um timer curto.
+t "open --no-wait não espera"      'title Aguardando'  browsin open "$SP/slowmount.html?ms=10000" --no-wait
 browsin open $SP/basic.html >/dev/null
 
 # Âncora (#) só: navegação no mesmo documento não tem load event; esperar por
@@ -123,6 +132,29 @@ tx "gate: --ignore não espera o stream"   0 '"settleMs": ([0-9]{1,3}|[0-4][0-9]
 t  "open --wait falso avisa"              'never became true'           browsin open "$G/nomount" --wait 'false' --timeout 300
 tx "check sem --fail-on segue saindo 0"   0 'logs  [0-9]+ problem'       browsin check "$SP/basic.html" --no-snap
 tx "check --json sem --fail-on sai 0"     0 '^  "ok": false'             browsin check "$SP/basic.html" --json --no-snap
+# open, reload e as ações leem erro e exceção pelo protocolo, como o check: o
+# buffer na página morre com o documento, e o que a página logava antes de se
+# substituir sumia ("logs  clean" na página final).
+BOUNCE_OUT=$(browsin open "$G/bounce" --wait "$MOUNT" 2>&1)
+t "open: erro antes do redirect aparece"     '^  \[error\] erro antes do bounce$'                 echo "$BOUNCE_OUT"
+t "open: exceção antes do redirect aparece"  '^  \[exception\] Uncaught Error: boom antes do bounce' echo "$BOUNCE_OUT"
+t "open: sem duplicata (protocolo + buffer)" '^logs  2 problem\(s\):$'                          echo "$BOUNCE_OUT"
+BOUNCE_OUT=$(browsin reload --wait "$MOUNT" 2>&1)
+t "reload: erro antes do redirect aparece"   '^  \[error\] erro antes do bounce$'                 echo "$BOUNCE_OUT"
+t "reload: exceção antes do redirect aparece" '^  \[exception\] Uncaught Error: boom antes do bounce' echo "$BOUNCE_OUT"
+t "reload: sem duplicata"                    '^logs  2 problem\(s\):$'                          echo "$BOUNCE_OUT"
+browsin open "$G/clicklog" >/dev/null 2>&1
+t "click que navega traz o erro da página que deixou" '\[error\] erro no clique' browsin click '#go' --wait 'location.pathname === "/clean"'
+# Erro logado entre comandos (o hover não lê log) sobrevive a um comando que
+# falha antes de ler o buffer, e sai uma vez na ação seguinte, junto com o dela.
+browsin open "$G/clicklog" >/dev/null 2>&1
+browsin hover '#hov' >/dev/null 2>&1
+browsin click '#nada' >/dev/null 2>&1
+CLICK_OUT=$(browsin click '#err' 2>&1)
+t "ação: erro da própria ação sai uma vez" '^1$' echo "$(echo "$CLICK_OUT" | grep -c 'erro do botão')"
+t "ação: erro entre comandos sobrevive a comando que falhou, uma vez" '^1$' echo "$(echo "$CLICK_OUT" | grep -c 'erro entre comandos')"
+# Os blocos seguintes leem a página de teste básica.
+browsin open "$SP/basic.html" >/dev/null 2>&1
 # O servidor sai aqui: um `wait` sem pid mais adiante esperaria por ele para sempre.
 kill $GATE_PID 2>/dev/null; wait $GATE_PID 2>/dev/null
 
@@ -487,15 +519,17 @@ t "cap de sessões ceifa a mais antiga" 'acima do cap' gc_cap
 
 echo "— abas —"
 browsin open $SP/basic.html >/dev/null
+# Espera a aba existir (condição, limitada), não um tempo fixo.
+wait_tabs() { for _ in $(seq 1 50); do browsin tabs 2>/dev/null | grep -q "^tabs  $1 aba" && return 0; sleep 0.1; done; return 1; }
 browsin js "void window.open('file://$SP/tall.html','browsin-suite-tab')" >/dev/null
-sleep 0.3
+wait_tabs 2
 t "tabs lista as abas"        'aba\(s\)'   browsin tabs
 t "tabs use fixa uma aba"     'usando 1'   browsin tabs use 1
 t "tabs auto descarta o pin"  'auto'       browsin tabs auto
 # Duas abas extras: um close não pode levar a última página (no headless shell isso
 # derruba o browser) e o caso de confirmação precisa de outra aba para fechar.
 browsin js "void window.open('file://$SP/tall.html','browsin-suite-tab2')" >/dev/null
-sleep 0.3
+wait_tabs 3
 t "tabs close fecha uma aba"  'fechou 0'   browsin tabs close 0
 # `/json/close/<id>` responde 200 com texto puro (`Target is closing`): parsear
 # como JSON fazia todo close real imprimir "sem confirmação do browser".
@@ -511,11 +545,18 @@ tx "deadlines e fechamento do CDP (sem browser)" 0 'RESULTADO: [0-9]+ ok, 0 falh
 # Renderer travado num laço (fixture spin.html): o browser responde em
 # /json/version e /json/list, mas nenhum round trip de protocolo volta. O
 # comando tem que falhar rápido e não-zero, não esperar para sempre.
-browsin open "$SP/spin.html?delay=1200&ms=5000" --no-wait >/dev/null 2>&1
-sleep 1.8
-SPIN_T0=$(date +%s)
-SPIN_OUT=$(BROWSIN_CDP_TIMEOUT_MS=800 browsin js '1' 2>&1); SPIN_CODE=$?
-SPIN_MS=$(( ($(date +%s) - SPIN_T0) * 1000 ))
+# A sonda repete até o laço começar (condição, limitada), em vez de um sleep
+# fixo que, com a máquina carregada, caía antes ou depois da janela travada. Com
+# deadline quebrado a sonda que pega o laço pendura até o fim dele e sai 0: as
+# duas asserções abaixo continuam reprovando.
+browsin open "$SP/spin.html?delay=1500&ms=5000" --no-wait >/dev/null 2>&1
+for _ in $(seq 1 40); do
+  SPIN_T0=$(date +%s)
+  SPIN_OUT=$(BROWSIN_CDP_TIMEOUT_MS=800 browsin js '1' 2>&1); SPIN_CODE=$?
+  SPIN_MS=$(( ($(date +%s) - SPIN_T0) * 1000 ))
+  [ "$SPIN_CODE" = 0 ] || break
+  sleep 0.1
+done
 if [ "$SPIN_CODE" = 1 ] && echo "$SPIN_OUT" | grep -qE 'timed out after 800ms'; then
   PASS=$((PASS+1)); printf '  ok   %s\n' "renderer travado: deadline vira erro (exit 1)"
 else FAIL=$((FAIL+1)); FAILED+=("renderer travado: deadline vira erro"); printf '  FAIL renderer travado: exit %s, veio: %s\n' "$SPIN_CODE" "$(echo "$SPIN_OUT" | head -2 | tr '\n' '|')"; fi
@@ -531,9 +572,12 @@ else FAIL=$((FAIL+1)); FAILED+=("comando seguinte anda após timeout"); printf '
 # Browser morto no meio de um comando: o pendente rejeita e o CLI sai não-zero.
 LOCKED_OUT="$(mktemp /tmp/browsin-kill.XXXXXX)"
 browsin open $SP/basic.html >/dev/null 2>&1
-( browsin js 'new Promise(r => setTimeout(r, 5000))' >"$LOCKED_OUT" 2>&1; echo $? >"$LOCKED_OUT.code" ) &
+( browsin js 'document.title = "pendente"; new Promise(r => setTimeout(r, 5000))' >"$LOCKED_OUT" 2>&1; echo $? >"$LOCKED_OUT.code" ) &
 KILLW=$!
-sleep 1.2
+# Mata quando o comando está de fato pendente (o título que ele pôs aparece no
+# /json/list do browser), não depois de um tempo fixo.
+BPORT=$(node -p "JSON.parse(require('fs').readFileSync(process.env.BROWSIN_DIR + '/state.json','utf8')).port" 2>/dev/null)
+for _ in $(seq 1 100); do curl -s "http://127.0.0.1:$BPORT/json/list" 2>/dev/null | grep -q pendente && break; sleep 0.1; done
 BPID=$(node -p "(JSON.parse(require('fs').readFileSync(process.env.BROWSIN_DIR + '/state.json','utf8')).pid) || ''" 2>/dev/null)
 kill -9 "$BPID" 2>/dev/null
 wait "$KILLW"
@@ -623,8 +667,8 @@ browsin down --all >/dev/null 2>&1
 # Lançamento cria um janitor por base, deduplicado; ele morre sozinho quando a
 # última sessão viva some. Intervalo curto só para o teste.
 BROWSIN_JANITOR=on BROWSIN_JANITOR_INTERVAL_S=2 sess suite-jan open $SP/basic.html >/dev/null 2>&1
-sleep 1.5
-JPID=$(cat "$BROWSIN_DIR/.janitor-lock" 2>/dev/null)
+JPID=
+for _ in $(seq 1 50); do JPID=$(cat "$BROWSIN_DIR/.janitor-lock" 2>/dev/null); [ -n "$JPID" ] && kill -0 "$JPID" 2>/dev/null && break; sleep 0.1; done
 if [ -n "$JPID" ] && kill -0 "$JPID" 2>/dev/null; then
   PASS=$((PASS+1)); printf '  ok   %s\n' "launch cria janitor vivo"
 else FAIL=$((FAIL+1)); FAILED+=("launch cria janitor vivo"); printf '  FAIL launch não deixou janitor (lock=%s)\n' "$JPID"; fi
@@ -637,6 +681,39 @@ JGONE=0
 for _ in $(seq 1 20); do kill -0 "$JPID" 2>/dev/null || { JGONE=1; break; }; sleep 0.5; done
 if [ "$JGONE" = 1 ]; then PASS=$((PASS+1)); printf '  ok   %s\n' "janitor sai quando a última sessão morre"
 else FAIL=$((FAIL+1)); FAILED+=("janitor sai quando a última sessão morre"); printf '  FAIL janitor sobreviveu à última sessão\n'; kill "$JPID" 2>/dev/null; fi
+
+echo "— setup.sh (hermético: home, bin e cache temporários) —"
+# Nunca escreve no home de verdade: BROWSIN_BIN_DIR + BROWSIN_SKILL_DIRS + --no-browsers.
+REPO="$(cd "$HERE/.." && pwd)"
+ST="$(mktemp -d /tmp/browsin-setup.XXXXXX)"
+mkdir -p "$ST/claude/skills" "$ST/codex/skills/ui-mocks" "$ST/bin" "$ST/browsers"
+ln -s "$ST/velho" "$ST/claude/skills/browsin"        # link antigo: é substituído
+touch "$ST/codex/skills/ui-mocks/MINHA.md"           # pasta de verdade: é de outra pessoa
+setup_run() { BROWSIN_BIN_DIR="$ST/bin" BROWSIN_SKILL_DIRS="$ST/claude/skills:$ST/codex/skills" BROWSIN_BROWSERS="$ST/browsers" \
+  bash "$REPO/scripts/setup.sh" --no-browsers; }
+GIT_BEFORE=$(git -C "$REPO" status --porcelain)
+SETUP_OUT=$(setup_run 2>&1); SETUP_CODE=$?
+links_ok() {
+  [ "$(readlink "$ST/claude/skills/browsin")" = "$REPO/skills/browsin" ] &&
+  [ "$(readlink "$ST/claude/skills/ui-mocks")" = "$REPO/skills/ui-mocks" ] &&
+  [ "$(readlink "$ST/codex/skills/browsin")" = "$REPO/skills/browsin" ] &&
+  [ "$(readlink "$ST/bin/browsin")" = "$REPO/bin/browsin" ]
+}
+if [ "$SETUP_CODE" = 0 ] && links_ok; then PASS=$((PASS+1)); printf '  ok   %s\n' "setup liga as duas skills e o CLI (link antigo substituído)"
+else FAIL=$((FAIL+1)); FAILED+=("setup liga as duas skills e o CLI"); printf '  FAIL setup (exit %s): %s\n' "$SETUP_CODE" "$(echo "$SETUP_OUT" | tail -4 | tr '\n' '|')"; fi
+if [ ! -L "$ST/codex/skills/ui-mocks" ] && [ -f "$ST/codex/skills/ui-mocks/MINHA.md" ] && echo "$SETUP_OUT" | grep -q 'ui-mocks existe e não é um link'; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "setup deixa pasta de verdade com nome de skill e diz"
+else FAIL=$((FAIL+1)); FAILED+=("setup deixa pasta de verdade com nome de skill"); printf '  FAIL setup mexeu numa pasta que não é dele\n'; fi
+if ! echo "$SETUP_OUT" | grep -q '==> browsers' && [ -z "$(ls -A "$ST/browsers")" ] &&
+   [ "$(echo "$SETUP_OUT" | grep -c "bash $REPO/scripts/install-browsers.sh")" = 1 ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "setup --no-browsers não instala browser e diz o comando numa linha"
+else FAIL=$((FAIL+1)); FAILED+=("setup --no-browsers"); printf '  FAIL setup --no-browsers: %s\n' "$(echo "$SETUP_OUT" | head -3 | tr '\n' '|')"; fi
+SETUP_OUT2=$(setup_run 2>&1); SETUP_CODE2=$?
+if [ "$SETUP_CODE2" = 0 ] && links_ok && [ "$(git -C "$REPO" status --porcelain)" = "$GIT_BEFORE" ]; then
+  PASS=$((PASS+1)); printf '  ok   %s\n' "setup é idempotente e não muda arquivo versionado"
+else FAIL=$((FAIL+1)); FAILED+=("setup idempotente"); printf '  FAIL segunda rodada (exit %s) ou árvore mudou\n' "$SETUP_CODE2"; fi
+tx "setup: flag desconhecida sai 2" 2 'flag desconhecida' bash "$REPO/scripts/setup.sh" --banana
+rm -rf "$ST"
 
 echo
 echo "RESULTADO: $PASS ok, $FAIL falhas"

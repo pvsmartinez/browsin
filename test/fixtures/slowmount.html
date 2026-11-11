@@ -4,9 +4,11 @@
 <script>
   // Mounts after a beat, like an SPA: title and body text only exist after it.
   // The default navigation wait should catch this; `--no-wait` should not.
+  // `?ms=N` moves the beat (default 500).
+  const ms = Number(new URLSearchParams(location.search).get('ms') ?? 500);
   setTimeout(() => {
     document.title = 'Montou';
     document.body.textContent = 'conteudo montado';
-  }, 500);
+  }, ms);
 </script>
 </body>

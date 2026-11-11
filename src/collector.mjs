@@ -5,16 +5,24 @@
  * lives in the page, not in a background process the CLI would have to talk to.
  *
  * Idempotent on purpose: it is injected on every navigation and on every attach.
+ *
+ * Every entry carries a sequence number, and `mark()` names this document and
+ * the last number handed out: a command takes a mark when it starts and splits
+ * the buffer at it when it ends (see `recordLogs` in commands.mjs), without
+ * draining anything up front — a command that fails early leaves the buffer
+ * whole for `logs`.
  */
 export const COLLECTOR = `(() => {
   if (window.__browsin) return;
   const MAX = 200;
   const buf = [];
+  const doc = Math.random().toString(36).slice(2);
+  let seq = 0;
   const push = (kind, msg) => {
-    buf.push({ kind, msg: String(msg).slice(0, 600) });
+    buf.push({ kind, msg: String(msg).slice(0, 600), seq: ++seq });
     if (buf.length > MAX) buf.shift();
   };
-  window.__browsin = { drain: () => buf.splice(0, buf.length), peek: () => buf.slice() };
+  window.__browsin = { drain: () => buf.splice(0, buf.length), peek: () => buf.slice(), mark: () => ({ doc, seq }) };
 
   const fmt = (v) => {
     if (typeof v === 'string') return v;

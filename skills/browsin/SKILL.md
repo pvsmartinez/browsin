@@ -12,7 +12,9 @@ passes a `BROWSIN_DIR`, such as the pi kit, owns that namespace and stays in the
 the flat layout.)
 
 If `browsin` is not on PATH, install it with `scripts/setup.sh` in a checkout of
-[browsin](https://gitlab.com/super-company-git/game-tools/browsin). `browsin doctor` shows what is in use.
+[browsin](https://gitlab.com/super-company-git/game-tools/browsin) (`--no-browsers` skips the ~550 MB
+download and prints the one command to run once; `BROWSIN_BIN_DIR` / `BROWSIN_SKILL_DIRS` move where it
+links). `browsin doctor` shows what is in use.
 
 **It never uses the user's Chrome profile.** By default it runs the headless shell, which has no UI
 layer: it does not appear on their screen, does not see their cookies, does not open a window. When
@@ -42,7 +44,7 @@ the question is aesthetic** (spacing, colour, alignment, "does it look bad?").
 browsin check <url|file>         # navigate + problems + network + screenshot, one call
 browsin check <url> --wait '<js>' --fail-on errors --json   # QA gate: exit 2 on problems
 browsin open <url|file> · browsin reload [--hard] · browsin back
-browsin logs [--all]             # console, exceptions, rejections, 4xx/5xx, failed resources
+browsin logs [--all]             # what the page logged BETWEEN commands: console, exceptions, 4xx/5xx…
 browsin network [url]            # every request with its status, at protocol level
 
 # understand
@@ -222,6 +224,12 @@ BROWSIN_SESSION=qa browsin check localhost:5173/experiments \
   stay intact. `--clip`/`--full` need it to render what is off screen, and then the page is laid out
   again once.
 - **`logs` drains** — reading twice does not repeat. `click`/`key`/`type` also drain when they report.
+- **An error logged right before a redirect is not lost.** `open`, `reload`, `check` and the actions
+  (`click`, `key`, `type`, `js`, `upload`, `drag`, `download`, `pdf`) take exceptions and
+  `console.error` from the protocol, which outlives the document: what a page logs before it replaces
+  itself (an auth bounce, the link a click followed, the form an Enter submitted) shows in that
+  command's own report. Only `logs` reads just the in-page buffer — what happened between commands —
+  and that buffer dies with the document.
 - **`--clip 'text=…'` takes the smallest element with that text**, almost always smaller than the box
   you wanted. For a screenshot, use the container's CSS selector (or `--pad`).
 - **`--nth` goes outside the selector**, but if you paste the whole snapshot line
